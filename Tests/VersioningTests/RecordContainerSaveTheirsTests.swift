@@ -11,8 +11,9 @@ private struct Note: Codable, Identifiable {
 private let id = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
 private let metadata = Data([7])
 
-private func fields(_ note: Note) throws -> RecordRepresentation.Fields {
-    try RecordRepresentation.Fields(JSONRepresentation(note), schema: RecordSchema(for: Note.self))
+// Encoding a Note cannot fail, and a non-throwing helper keeps the comparisons inside #expect.
+private func fields(_ note: Note) -> RecordRepresentation.Fields {
+    try! RecordRepresentation.Fields(JSONRepresentation(note), schema: RecordSchema(for: Note.self))
 }
 
 private extension RecordContainer {
@@ -26,7 +27,7 @@ private extension RecordContainer {
         let container = RecordContainer()
         try container.save(their: Note(id: id))
         let row = try #require(try container.row(id: id))
-        #expect(row == RecordContainer.Row(id: id, zone: "Notes", type: "Note", metadata: metadata, base: try fields(Note(id: id))))
+        #expect(row == RecordContainer.Row(id: id, zone: "Notes", type: "Note", metadata: metadata, base: fields(Note(id: id))))
         #expect(row.status == .synced)
     }
 
@@ -44,8 +45,8 @@ private extension RecordContainer {
         try container.save(their: Note(id: id, body: "Theirs"))
 
         let row = try #require(try container.row(id: id))
-        #expect(row.ours == (try fields(Note(id: id, title: "Ours", body: "Theirs"))))
-        #expect(row.base == (try fields(Note(id: id, body: "Theirs"))))
+        #expect(row.ours == fields(Note(id: id, title: "Ours", body: "Theirs")))
+        #expect(row.base == fields(Note(id: id, body: "Theirs")))
         #expect(row.status == .waitingToUpload)
     }
 
@@ -64,9 +65,9 @@ private extension RecordContainer {
         try container.save(their: Note(id: id, title: "Theirs"))
 
         let row = try #require(try container.row(id: id))
-        #expect(row.ours == (try fields(Note(id: id, title: "Ours"))))
-        #expect(row.base == (try fields(Note(id: id))))
-        #expect(row.theirs == (try fields(Note(id: id, title: "Theirs"))))
+        #expect(row.ours == fields(Note(id: id, title: "Ours")))
+        #expect(row.base == fields(Note(id: id)))
+        #expect(row.theirs == fields(Note(id: id, title: "Theirs")))
         #expect(row.status == .conflict("Both sides changed $.title"))
     }
 
