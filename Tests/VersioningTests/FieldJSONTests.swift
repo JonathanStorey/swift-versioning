@@ -42,7 +42,8 @@ private struct Card: Codable, Equatable {
         #expect(fields["tags"] == .list([.string("a"), .string("b")]))
         #expect(fields["pin"] == .encrypted(.int64(42)))
         #expect(fields["photos"] == .list([.reference(.init(recordName: photo.uuidString))]))
-        #expect(fields["nested"] == .bytes(Data(#"{"note":"Inside"}"#.utf8)))
+        guard case .bytes(let nested)? = fields["nested"] else { Issue.record("A nested value is stored as bytes."); return }
+        #expect(try JSONDecoder().decode(Nested.self, from: nested) == Nested())
     }
 
     @Test func fieldsReadBackAsTheSameValue() throws {
@@ -62,7 +63,8 @@ private struct Card: Codable, Equatable {
     @Test func undeclaredFieldsAreLeftOutOfTheJSON() throws {
         var fields = try RecordRepresentation.Fields(JSONRepresentation(Card()), schema: schema)
         fields["addedLater"] = .string("New")
-        #expect(try JSONRepresentation(fields, schema: schema)["addedLater"] == nil)
+        guard case .object(let object) = try JSONRepresentation(fields, schema: schema) else { Issue.record("A record is an object."); return }
+        #expect(!object.contains { $0.key == "addedLater" })
     }
 
     @Test func aFieldOfTheWrongTypeThrows() {
