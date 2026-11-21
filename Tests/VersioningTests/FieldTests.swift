@@ -20,7 +20,7 @@ private let every: [Field] = [
 
 @Suite struct FieldTests {
     @Test(arguments: every)
-    fileprivate func everyFieldReadsBackExactly(_ field: Field) throws {
+    func everyFieldReadsBackExactly(_ field: RecordRepresentation.Field) throws {
         let data = try JSONEncoder().encode(field)
         #expect(try JSONDecoder().decode(Field.self, from: data) == field)
     }
