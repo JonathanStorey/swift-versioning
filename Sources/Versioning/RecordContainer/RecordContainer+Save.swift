@@ -35,10 +35,26 @@ extension RecordContainer {
     func save<Record: Codable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID == UUID {
         let schema = try RecordSchema(for: Record.self)
         let ours = try Self.encoder.encode(RecordRepresentation.Fields(JSONRepresentation(record), schema: schema))
-        try run("""
-            INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
-            """, record.id.uuidString, zone, owner, schema.recordType, String(decoding: ours, as: UTF8.self))
+        try locked {
+            try run("""
+                INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
+                """, record.id.uuidString, zone, owner, schema.recordType, String(decoding: ours, as: UTF8.self))
+        }
+    }
+
+    /// Saves the server's version of the record `id`, with its system fields as `metadata`.
+    ///
+    /// A new record, or one with no local changes, takes `fields` as its `base`. With local
+    /// changes waiting, `fields` merges into `ours` first by `merge`, key by key unless the
+    /// record's type supplies its own. See ``Row/receive(_:merging:)``.
+    func save(their fields: RecordRepresentation.Fields, id: UUID, zone: String, owner: String, type: String, metadata: Data?, merging merge: RecordRepresentation.FieldsMerge = { try $0.merging(with: $1, from: $2) }) throws {
+        try locked {
+            var row = try row(id: id) ?? Row(id: id, zone: zone, owner: owner, type: type)
+            row.metadata = metadata
+            row.receive(fields, merging: merge)
+            try write(row)
+        }
     }
 
     /// The row for `id`, or `nil` when the container has none.
@@ -63,6 +79,17 @@ extension RecordContainer {
 }
 
 private extension RecordContainer {
+    /// Writes every column of `row`, replacing any row with the same id.
+    func write(_ row: Row) throws {
+        func text(_ fields: RecordRepresentation.Fields?) throws -> String? {
+            try fields.map { String(decoding: try Self.encoder.encode($0), as: UTF8.self) }
+        }
+        try run("""
+            INSERT OR REPLACE INTO record (id, zone, owner, type, metadata, base, ours, theirs, is_deleted, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, row.id.uuidString, row.zone, row.owner, row.type, row.metadata, try text(row.base), try text(row.ours), try text(row.theirs), row.isDeleted, row.error)
+    }
+
     /// Prepares `sql`, binds `values` in order, and steps through it, passing each result row to `body`.
     func run(_ sql: String, _ values: Any?..., each body: (OpaquePointer) throws -> Void = { _ in }) throws {
         var statement: OpaquePointer?

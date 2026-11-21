@@ -44,3 +44,39 @@ extension RecordContainer.Row {
         }
     }
 }
+
+extension RecordRepresentation {
+    /// A three-way merge of a record's fields: `ours` with `theirs`, from `base`.
+    typealias FieldsMerge = (_ ours: Fields, _ theirs: Fields, _ base: Fields) throws -> Fields
+}
+
+extension RecordContainer.Row {
+    /// Takes `fields`, the server's newest version, as this row's `base`.
+    ///
+    /// With no local changes, there is nothing to merge. With local changes, `fields`
+    /// merges into `ours` by `merge`, key by key unless the record's type supplies its own,
+    /// and a merge that matches `fields` leaves nothing to upload. On a conflict, or a value
+    /// the type cannot read, `fields` waits in `theirs`, `error` says why, and `ours` and
+    /// `base` are unchanged, so nothing uploads until it is settled.
+    mutating func receive(_ fields: RecordRepresentation.Fields, merging merge: RecordRepresentation.FieldsMerge = { try $0.merging(with: $1, from: $2) }) {
+        guard let ours else {
+            base = fields
+            theirs = nil
+            error = nil
+            return
+        }
+        do {
+            let merged = try merge(ours, fields, base ?? [:])
+            self.ours = merged == fields ? nil : merged
+            base = fields
+            theirs = nil
+            error = nil
+        } catch let conflict as MergeConflict {
+            theirs = fields
+            error = "Both sides changed " + conflict.paths.map(\.description).joined(separator: ", ")
+        } catch {
+            theirs = fields
+            self.error = String(describing: error)
+        }
+    }
+}

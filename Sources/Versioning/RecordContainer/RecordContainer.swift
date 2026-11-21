@@ -15,6 +15,8 @@ public final class RecordContainer: @unchecked Sendable {
 
     // Opened with SQLITE_OPEN_FULLMUTEX, so SQLite serializes every call on it.
     let connection: OpaquePointer
+    // Serializes a read of a row with the write that follows it.
+    private let lock = NSLock()
 
     /// An empty container held in memory.
     public convenience init() {
@@ -64,6 +66,13 @@ extension DatabaseError {
 }
 
 extension RecordContainer {
+    /// The result of `body`, with no other locked work on the container running at the same time.
+    func locked<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+
     /// Runs one or more SQL statements that return no rows.
     func execute(_ sql: String) throws(DatabaseError) {
         let code = sqlite3_exec(connection, sql, nil, nil, nil)
