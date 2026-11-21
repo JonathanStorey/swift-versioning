@@ -3,8 +3,12 @@ import Foundation
 extension RecordRepresentation.Field: Mergeable {
     /// The side that changed the field, or the field's own merge when both did:
     /// a location keeps the later measurement, an asset with the same bytes does
-    /// not conflict, a list keeps every side's additions in place, and an
-    /// encrypted value merges what it holds. Any other change on both sides conflicts.
+    /// not conflict, a list of references keeps every side's additions in place,
+    /// and an encrypted value merges what it holds. Each of these is what the
+    /// property's type, `Location`, `Asset` or `References`, would do itself.
+    ///
+    /// Any other change on both sides conflicts, so the type's own merge decides
+    /// it: a `Mergeable` raw value, a set, a list merged by id, or a nested value.
     func merging(with theirs: Self, from base: Self) throws(MergeConflict) -> Self {
         if theirs == base || self == theirs { return self }
         if self == base { return theirs }
@@ -13,7 +17,7 @@ extension RecordRepresentation.Field: Mergeable {
             return .location(try ours.merging(with: theirs, from: base))
         case let (.asset(ours), .asset(theirs), .asset(base)):
             return .asset(try Asset(rawValue: ours).merging(with: Asset(rawValue: theirs), from: Asset(rawValue: base)).rawValue)
-        case let (.list(ours), .list(theirs), .list(base)):
+        case let (.list(ours), .list(theirs), .list(base)) where [ours, theirs, base].allSatisfy(\.holdsOnlyReferences):
             return .list(try RangeReplaceableCollectionElementMerge<[Self]>().merge(base: base, ours: ours, theirs: theirs))
         case let (.encrypted(ours), .encrypted(theirs), .encrypted(base)):
             return .encrypted(try ours.merging(with: theirs, from: base))
@@ -36,6 +40,13 @@ extension RecordRepresentation.Field: Mergeable {
         default:
             throw MergeConflict()
         }
+    }
+}
+
+private extension Array where Element == RecordRepresentation.Field {
+    /// Whether every element is a reference, as a `References` list stores them.
+    var holdsOnlyReferences: Bool {
+        allSatisfy { if case .reference = $0 { true } else { false } }
     }
 }
 

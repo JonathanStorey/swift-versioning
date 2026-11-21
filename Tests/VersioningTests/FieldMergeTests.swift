@@ -49,6 +49,12 @@ private func asset(containing text: String) throws -> RecordRepresentation.Field
         #expect(try RecordRepresentation.Field.list([c, a]).merging(with: .list([a, b]), from: .list([a])) == .list([c, a, b]))
     }
 
+    @Test func otherListsLeaveTheMergeToTheirType() {
+        #expect(throws: MergeConflict(), "A set or a raw value merges by its own rules.") {
+            try RecordRepresentation.Field.list([.string("c"), .string("a")]).merging(with: .list([.string("a"), .string("b")]), from: .list([.string("a")]))
+        }
+    }
+
     @Test func anEncryptedFieldMergesWhatItHolds() throws {
         #expect(try RecordRepresentation.Field.encrypted(at(20)).merging(with: .encrypted(at(10, latitude: 5)), from: .encrypted(at(0))) == .encrypted(at(20)))
         #expect(throws: MergeConflict()) {
