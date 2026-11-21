@@ -13,11 +13,11 @@ extension RecordContainer {
         /// The newest system fields from the server, or `nil` before the server first confirms the record.
         var metadata: Data? = nil
         /// What the server last confirmed, or `nil` for a record never uploaded.
-        var base: JSONRepresentation? = nil
+        var base: RecordRepresentation.Fields? = nil
         /// This device's saved changes the server has not confirmed, or `nil` when there is nothing to upload.
-        var ours: JSONRepresentation? = nil
+        var ours: RecordRepresentation.Fields? = nil
         /// A newer server version waiting to merge into `ours`. Nothing uploads while it waits.
-        var theirs: JSONRepresentation? = nil
+        var theirs: RecordRepresentation.Fields? = nil
         /// A local delete the server has not confirmed.
         var isDeleted = false
         /// Why `theirs` could not merge, or, with no `theirs`, why the server rejected the upload.

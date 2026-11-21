@@ -21,16 +21,24 @@ extension RecordContainer {
         )
         """
 
+    // Sorted keys keep a record's JSON text the same however its dictionary is ordered.
+    private static var encoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return encoder
+    }
+
     /// Saves `record` as this device's version: `ours`, waiting to upload.
     ///
     /// A new id adds a row. An existing id replaces `ours`, clears `isDeleted` and `error`,
     /// and keeps `base`, `theirs`, `metadata`, the zone and the owner, in one statement.
-    func upsert<Record: Encodable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID == UUID {
-        let ours = try JSONEncoder().encode(JSONRepresentation(record))
+    func save<Record: Codable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID == UUID {
+        let schema = try RecordSchema(for: Record.self)
+        let ours = try Self.encoder.encode(RecordRepresentation.Fields(JSONRepresentation(record), schema: schema))
         try run("""
             INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
-            """, record.id.uuidString, zone, owner, String(describing: Record.self), String(decoding: ours, as: UTF8.self))
+            """, record.id.uuidString, zone, owner, schema.recordType, String(decoding: ours, as: UTF8.self))
     }
 
     /// The row for `id`, or `nil` when the container has none.
@@ -43,9 +51,9 @@ extension RecordContainer {
                 owner: statement.text(at: 1) ?? "",
                 type: statement.text(at: 2) ?? "",
                 metadata: statement.blob(at: 3),
-                base: try statement.json(at: 4),
-                ours: try statement.json(at: 5),
-                theirs: try statement.json(at: 6),
+                base: try statement.fields(at: 4),
+                ours: try statement.fields(at: 5),
+                theirs: try statement.fields(at: 6),
                 isDeleted: sqlite3_column_int(statement, 7) != 0,
                 error: statement.text(at: 8)
             )
@@ -94,7 +102,7 @@ private extension OpaquePointer {
         return Data(bytes: bytes, count: Int(sqlite3_column_bytes(self, column)))
     }
 
-    func json(at column: Int32) throws -> JSONRepresentation? {
-        try text(at: column).map { try JSONDecoder().decode(JSONRepresentation.self, from: Data($0.utf8)) }
+    func fields(at column: Int32) throws -> RecordRepresentation.Fields? {
+        try text(at: column).map { try JSONDecoder().decode(RecordRepresentation.Fields.self, from: Data($0.utf8)) }
     }
 }
