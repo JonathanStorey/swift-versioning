@@ -111,6 +111,15 @@ extension RecordContainer {
         try save(deleted: rowID)
     }
 
+    /// Removes every row in the zone `zoneID` on this device, as `clear(in:)` for a `Zone` describes.
+    ///
+    /// ```swift
+    /// for deletion in changes.deletions { try container.clear(in: deletion.zoneID) }
+    /// ```
+    func clear(in zoneID: CKRecordZone.ID) throws(DatabaseError) {
+        try clear(in: Zone(zoneID.zoneName, owner: zoneID.ownerName))
+    }
+
     /// Saves why the server did not delete the record `id`, which this device sent.
     ///
     /// - A record the server no longer has is already deleted, so the row is removed.

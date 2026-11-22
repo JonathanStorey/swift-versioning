@@ -17,6 +17,23 @@ private extension RecordContainer {
 }
 
 @Suite struct RecordContainerDeleteTests {
+    @Test func clearingAZoneRemovesOnlyItsRows() throws {
+        let container = RecordContainer()
+        let kept = Note(title: "Kept"), shared = Note(title: "Shared"), mine = Note(title: "Mine")
+        try container.save(our: kept, zone: "Notes")
+        try container.save(our: shared, zone: Zone("Notes", owner: "someone"))
+        try container.save(our: mine, zone: "Other")
+
+        try container.clear(in: Zone("Notes", owner: "someone"))
+        #expect(try container.row(id: shared.id) == nil)
+        #expect(try container.row(id: kept.id) != nil)
+        #expect(try container.row(id: mine.id) != nil)
+
+        try container.clear()
+        #expect(try container.row(id: kept.id) == nil)
+        #expect(try container.row(id: mine.id) == nil)
+    }
+
     @Test func aRecordNeverUploadedIsRemovedAtOnce() throws {
         let container = RecordContainer()
         let note = Note(title: "Draft")

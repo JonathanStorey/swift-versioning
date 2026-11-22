@@ -112,6 +112,21 @@ extension RecordContainer {
         }
     }
 
+    /// Removes every row on this device, sending nothing, as when the iCloud account signs
+    /// out or changes. Unlike ``delete(id:)``, nothing is deleted on the server.
+    func clear() throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in try run("DELETE FROM record") }
+    }
+
+    /// Removes every row in `zone` on this device, sending nothing, as when the zone was
+    /// deleted on the server. Unsent changes in the zone are dropped, since the zone they
+    /// belong to is gone.
+    func clear(in zone: Zone) throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in
+            try run("DELETE FROM record WHERE zone = ? AND owner = ?", zone.name, zone.owner)
+        }
+    }
+
     /// Changes the row for `id` by `change`, in one locked read and write. With no row for
     /// `id`, changes `new` and adds it, or does nothing when `new` is `nil`.
     func update(id: UUID, inserting new: Row? = nil, _ change: (inout Row) -> Void) throws(DatabaseError) {
