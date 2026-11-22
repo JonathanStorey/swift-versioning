@@ -36,12 +36,22 @@ extension JSONSchema {
         self = try recorder.schema()
     }
 
-    /// Records `type` as `init(for:)` does, and returns the placeholder value
-    /// it decoded and the placeholder record names handed out, by coding path.
-    package static func record<T: Decodable>(_ type: T.Type) throws -> (value: T, markers: [UUID: [String]]) {
+    /// Decodes `type` as `init(for:)` does and returns the placeholder value,
+    /// with the coding path of each ``Markable`` value in it, by its marker.
+    ///
+    /// Each ``Markable`` value is given its own marker, so reading a key path
+    /// on the placeholder and looking up its marker finds the coding key the
+    /// property is decoded from, without runtime names.
+    public static func placeholder<T: Decodable>(for type: T.Type) throws -> (value: T, markers: [UUID: [String]]) {
         let context = SchemaRecorder.Context()
         let value = try SchemaRecorder(codingPath: [], context: context).decode(type)
         return (value, context.markers)
+    }
+
+    /// A value that ``placeholder(for:)`` gives a unique marker.
+    public protocol Markable {
+        /// Stores `marker` so it can be read back from the placeholder.
+        mutating func mark(_ marker: UUID)
     }
 }
 
@@ -54,8 +64,8 @@ private final class SchemaRecorder: Decoder {
     final class Context {
         /// Types being recorded on the current path, to detect recursion.
         var visiting: Set<ObjectIdentifier> = []
-        /// The record name each placeholder reference was given, so a key
-        /// path read from the placeholder value finds its coding path.
+        /// The coding path of each marker handed to a ``JSONSchema/Markable``
+        /// value, so a key path read from the placeholder finds its coding path.
         var markers: [UUID: [String]] = [:]
     }
 
@@ -133,12 +143,11 @@ extension SchemaRecorder {
         if case .array = kind, type is any SetAlgebra.Type {
             isUnique = true
         }
-        // A reference gets a unique record name, so a key path can find it.
-        if var reference = value as? RecordRepresentation.Reference {
+        // A markable value gets a unique marker, so a key path can find it.
+        if let markable = value as? any JSONSchema.Markable {
             let marker = UUID()
             context.markers[marker] = path
-            reference.recordName = marker.uuidString
-            return reference as? T ?? value
+            return markable.marked(marker) as? T ?? value
         }
         return value
     }
@@ -463,5 +472,13 @@ private struct SingleValueRecorder: SingleValueDecodingContainer {
 
     func decode<T: Decodable>(_ type: T.Type) throws -> T {
         try recorder.decode(type)
+    }
+}
+
+private extension JSONSchema.Markable {
+    func marked(_ marker: UUID) -> Self {
+        var copy = self
+        copy.mark(marker)
+        return copy
     }
 }

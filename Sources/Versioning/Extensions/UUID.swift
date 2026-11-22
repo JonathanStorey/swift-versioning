@@ -4,7 +4,7 @@ extension UUID {
     /// The 128-bit MurmurHash3 (x64, seed 0) of the UTF-8 bytes of `text`.
     /// The bytes are the two 64-bit halves, each little-endian, matching the
     /// reference implementation's output.
-    init(stableHashOf text: String) {
+    public init(stableHashOf text: String) {
         let c1: UInt64 = 0x87c3_7b91_1142_53d5
         let c2: UInt64 = 0x4cf5_ad43_2745_937f
         var h1: UInt64 = 0

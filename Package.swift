@@ -16,17 +16,7 @@ let package = Package(
         .library(name: "Versioning", targets: ["Versioning"]),
     ],
     targets: [
-        .target(
-            name: "Versioning",
-            dependencies: [.target(name: "CSQLite", condition: .when(platforms: [.linux]))],
-            exclude: ["RecordContainer/README.md"]
-        ),
-        // Apple platforms import SQLite3 from the SDK. Linux links the system library.
-        .systemLibrary(
-            name: "CSQLite",
-            pkgConfig: "sqlite3",
-            providers: [.apt(["libsqlite3-dev"])]
-        ),
+        .target(name: "Versioning"),
         .testTarget(
             name: "VersioningTests",
             dependencies: ["Versioning"]

@@ -11,7 +11,6 @@ jobs:
     container: swift:6.0
     steps:
       - uses: actions/checkout@v4
-      - run: apt-get update && apt-get install -y libsqlite3-dev
       # A test process that dies can still exit 0, so the run must also report that it finished.
       - run: |
           set -o pipefail
