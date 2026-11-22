@@ -74,8 +74,32 @@ private extension RecordContainer {
         #expect(row.status == .synced, "\(row)")
     }
 
-    @Test func aConflictWaitsWithoutTouchingOursOrBase() throws {
+    @Test func aConflictKeepsOursAtTheConflictingFieldByDefault() throws {
         let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
+        try container.save(their: Note(id: id, title: "Theirs", body: "Theirs"))
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.ours == json(Note(id: id, title: "Ours", body: "Theirs")))
+        #expect(row.theirs == nil)
+        #expect(row.status == .waitingToUpload)
+    }
+
+    @Test func theMergeStrategyCanKeepTheirs() throws {
+        let container = RecordContainer.registered()
+        container.mergeStrategy = .favoring(.theirs)
+        try container.save(their: Note(id: id))
+        try container.save(our: Note(id: id, title: "Ours", body: "Ours"), zone: "Notes")
+        try container.save(their: Note(id: id, title: "Theirs"))
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.ours == json(Note(id: id, title: "Theirs", body: "Ours")))
+    }
+
+    @Test func aConflictWaitsWhenTheStrategyKeepsNoSide() throws {
+        let container = RecordContainer.registered()
+        container.mergeStrategy = .favoring(nil)
         try container.save(their: Note(id: id))
         try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
         try container.save(their: Note(id: id, title: "Theirs"))
@@ -89,6 +113,7 @@ private extension RecordContainer {
 
     @Test func aNewerVersionCanSettleAConflict() throws {
         let container = RecordContainer.registered()
+        container.mergeStrategy = .favoring(nil)
         try container.save(their: Note(id: id))
         try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
         try container.save(their: Note(id: id, title: "Theirs"))
@@ -97,7 +122,7 @@ private extension RecordContainer {
         #expect(row.status == .synced, "\(row)")
     }
 
-    @Test func aVersionTheTypeCannotReadWaits() throws {
+    @Test func aVersionTheTypeCannotReadIsIgnored() throws {
         let container = RecordContainer.registered()
         try container.save(their: Note(id: id))
         try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
@@ -105,8 +130,23 @@ private extension RecordContainer {
 
         let row = try #require(try container.row(id: id))
         #expect(row.ours == json(Note(id: id, title: "Ours")))
-        #expect(row.theirs?["title"] == 3)
-        #expect(row.error != nil)
+        #expect(row.theirs == nil)
+        #expect(row.error == nil)
+        #expect(row.status == .waitingToUpload)
+    }
+
+    @Test func anOlderShapeReadsItsMissingFieldsFromTheOtherVersion() throws {
+        let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        try container.save(our: Note(id: id, body: "Mine"), zone: "Notes")
+        let older: JSONRepresentation = ["id": .string(id.uuidString), "title": "Theirs", "hits": 3]
+        try container.save(their: older, id: id, zone: "Notes", type: "Note", metadata: metadata)
+
+        #expect(try container.row(id: id)?.ours == json(Note(id: id, title: "Theirs", body: "Mine")))
+    }
+
+    @Test func relationshipIsRegisteredByDefault() throws {
+        _ = try RecordContainer().registeredType(named: "Relationship")
     }
 
     @Test func anUnregisteredTypeSavesWithNothingToMerge() throws {

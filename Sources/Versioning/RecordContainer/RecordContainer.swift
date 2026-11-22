@@ -22,7 +22,26 @@ public final class RecordContainer: @unchecked Sendable {
     /// a new folder in the temporary directory, removed with the container.
     let assets: URL
     /// The registered record types, by record type name. Read and written while locked.
-    var registrations: [String: RecordType] = [:]
+    var registrations: [String: RecordType] = [String(describing: Relationship.self): Relationship.self]
+    /// The strategy for the values that still conflict after a record type's own merge,
+    /// stored under the lock. See ``mergeStrategy``.
+    private var storedMergeStrategy: DefaultMergeStrategy<JSONRepresentation> = .favoring(.ours)
+
+    /// How the values that still conflict after a record type's own merge are settled, so a
+    /// merge never stops syncing.
+    ///
+    /// The default, `.favoring(.ours)`, keeps this device's value at each conflicting
+    /// field and merges everything else, the field-by-field "local edit wins" of Apple's
+    /// CloudKit samples. `.favoring(.theirs)` keeps the server's. `.favoring(nil)` lets the
+    /// conflict stand, so the row waits until another version settles it.
+    ///
+    /// ```swift
+    /// container.mergeStrategy = .favoring(.theirs)
+    /// ```
+    var mergeStrategy: DefaultMergeStrategy<JSONRepresentation> {
+        get { locked { storedMergeStrategy } }
+        set { locked { storedMergeStrategy = newValue } }
+    }
 
     /// An empty container held in memory.
     public convenience init() {

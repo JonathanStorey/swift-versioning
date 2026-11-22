@@ -21,7 +21,7 @@ import Foundation
 ///
 /// One query, `keyPath == "Note.tags" AND references CONTAINS` a record,
 /// finds every link to it from either side.
-public struct Relationship: Codable, Hashable, Sendable, Identifiable {
+public struct Relationship: Codable, Hashable, Sendable, Identifiable, Mergeable {
     /// The declaring type and property, as in `"Note.tags"`.
     public private(set) var keyPath: String
     /// The declaring record's id, then the target's id.
