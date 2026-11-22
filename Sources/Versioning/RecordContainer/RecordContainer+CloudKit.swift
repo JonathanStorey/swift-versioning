@@ -81,7 +81,8 @@ extension RecordContainer {
     /// unchanged asset is never sent again. A field `ours` no longer has is set to `nil`, so
     /// the server clears it. A record with no `base` sends every field.
     /// A row that is synced, deleted, waiting to merge, or rejected sends nothing. A row that
-    /// cannot be encoded sends nothing, with the reason in `error`. Throws only when the
+    /// cannot be encoded sends nothing, with the reason in `error`. What it sends is kept as
+    /// the row's `sent` until the server confirms it. Throws only when the
     /// database fails.
     ///
     /// ```swift
@@ -95,34 +96,33 @@ extension RecordContainer {
         )
         do {
             try CKRecordEncoder().encode(ours, as: registeredType(named: row.type), to: record, changedFrom: row.base)
-            return record
         } catch {
             try update(id: id) { $0.error = "This device could not send its \(row.type): \(error)" }
             return nil
         }
+        try update(id: id) { $0.sent = ours }
+        return record
     }
 
-    /// Saves `record`, which this device sent and the server saved, as the row's `base`,
-    /// with its system fields as `metadata`.
+    /// Saves that the server saved `record`, which this device sent: the row's `sent` version
+    /// becomes its `base`, with the record's system fields as `metadata`.
     ///
-    /// Nothing merges, as ``Row/confirm(_:)`` describes, so changes saved while the record
-    /// was on its way stay waiting to upload. Throws only when the database fails.
+    /// The record holds only the fields that were sent, so the row's `sent`, kept by
+    /// ``send(id:)``, says what the server now has. Nothing merges, as ``Row/confirm(_:)``
+    /// describes, so changes saved while the record was on its way stay waiting to upload.
+    /// A row with no `sent` cannot tell, so it forgets its `base` and its next send uploads
+    /// every field. Throws only when the database fails.
     func save(sent record: CKRecord) throws(DatabaseError) {
         guard let id = record.recordID.rowID else { return }
-        let json: JSONRepresentation
-        do {
-            json = try self.json(of: record)
-        } catch {
-            // Only a record whose type this device no longer registers, so the upload stops here.
-            return try update(id: id) { row in
-                row.metadata = record.systemFields
-                row.error = "This device could not read the \(record.recordType) it sent: \(error)"
-            }
-        }
-        // Its assets are the container's own files, which `send` uploaded, so nothing is copied.
         try update(id: id) { row in
             row.metadata = record.systemFields
-            row.confirm(json)
+            if let sent = row.sent {
+                row.confirm(sent)
+            } else {
+                row.ours = row.ours ?? row.base
+                row.base = nil
+                row.error = nil
+            }
         }
     }
 
@@ -130,7 +130,8 @@ extension RecordContainer {
     ///
     /// - A newer server version merges in, as `save(their:)` describes, and the next
     ///   send replaces that version.
-    /// - A record the server no longer has loses its `metadata`, so the next send creates it again.
+    /// - A record the server no longer has loses its `metadata` and `base`, so the next send
+    ///   creates it again with every field.
     /// - A missing zone, or a failure worth retrying, changes nothing, so the record is sent again.
     /// - Any other error is saved in `error`, and nothing more uploads until the record is saved again.
     ///
@@ -142,7 +143,11 @@ extension RecordContainer {
         guard let id = record.recordID.rowID else { return }
         switch error.code {
         case .unknownItem:
-            try update(id: id) { $0.metadata = nil }
+            try update(id: id) { row in
+                row.ours = row.ours ?? row.base
+                row.metadata = nil
+                row.base = nil
+            }
         case let code where code.isWorthRetrying:
             return
         default:
@@ -247,10 +252,7 @@ private extension CKRecordEncoder {
         guard let base else { return try encode(value, to: record) }
         let scratch = CKRecord(recordType: record.recordType, recordID: record.recordID)
         try encode(value, to: scratch)
-        let encrypted = Set(Mirror(reflecting: value).children.compactMap { child -> String? in
-            guard let label = child.label, child.value is any EncryptedValue else { return nil }
-            return label.hasPrefix("_") ? String(label.dropFirst()) : label
-        })
+        let encrypted = Set(Mirror(reflecting: value).properties.filter { $0.value is any EncryptedValue }.map { $0.name })
         for key in json.changedKeys(from: base) {
             if encrypted.contains(key) {
                 record.encryptedValues[key] = scratch.encryptedValues[key]

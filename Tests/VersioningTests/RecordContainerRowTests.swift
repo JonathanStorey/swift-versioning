@@ -32,7 +32,7 @@ import Testing
         waiting.ours = ["title": "Ours"]
         waiting.isDeleted = true
         waiting.theirs = ["title": "Theirs"]
-        #expect(waiting.status == .waitingToMerge)
+        #expect(waiting.status == .conflict(""))
 
         waiting.error = "title changed on both sides"
         #expect(waiting.status == .conflict("title changed on both sides"))

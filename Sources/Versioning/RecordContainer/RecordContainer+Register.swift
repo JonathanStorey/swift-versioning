@@ -54,12 +54,14 @@ extension RecordContainer {
     /// - A version that cannot be read as `type` counts as missing: an unreadable `base`
     ///   makes a two-way merge, an unreadable `theirs` keeps `ours`, and an unreadable `ours`
     ///   takes `theirs`. Fields the type does not have are dropped.
-    /// - A key one version lacks, as a version saved before a field was added, is read from
-    ///   the other version, so the older shape still decodes and leaves that field unchanged.
+    /// - A version that decodes as it is merges as it is, so an optional cleared on one side
+    ///   stays cleared. Only when a key it lacks stops it decoding, as a version saved before
+    ///   a field was added, is each missing key read from the other version, so the older
+    ///   shape still decodes and leaves that field unchanged.
     func merged<Record: Codable & Mergeable>(_ ours: JSONRepresentation, with theirs: JSONRepresentation, from base: JSONRepresentation?, as type: Record.Type, id: UUID) throws -> JSONRepresentation {
-        let mine = try? ours.filling(from: theirs).decode(Record.self)
-        let other = try? theirs.filling(from: ours).decode(Record.self)
-        let original = try? base?.filling(from: ours.filling(from: theirs)).decode(Record.self)
+        let mine = ours.decoded(as: Record.self, filling: theirs)
+        let other = theirs.decoded(as: Record.self, filling: ours)
+        let original = base?.decoded(as: Record.self, filling: ours.filling(from: theirs))
         let merged: Record
         switch (mine, other) {
         case let (mine?, other?): merged = try settled(mine, with: other, from: original)
@@ -87,6 +89,13 @@ private extension RecordContainer {
 }
 
 private extension JSONRepresentation {
+    /// This value decoded as `type`, or, when that fails, decoded with each top-level key it
+    /// lacks taken from `other`, or `nil` when neither decodes.
+    func decoded<T: Decodable>(as type: T.Type, filling other: JSONRepresentation) -> T? {
+        if let value = try? decode(type) { return value }
+        return try? filling(from: other).decode(type)
+    }
+
     /// This object with each top-level key it lacks taken from `other`.
     func filling(from other: JSONRepresentation) -> JSONRepresentation {
         guard case .object(var pairs) = self, case .object(let others) = other else { return self }
