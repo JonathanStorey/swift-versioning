@@ -162,13 +162,18 @@ extension RecordContainer {
         try save(deleted: rowID)
     }
 
-    /// Removes every row in the zone `zoneID` on this device, as `clear(in:)` for a `Zone` describes.
+    /// Saves that the server deleted the zone `zoneID` for `reason`, as `clear(in:resending:)`
+    /// describes: the zone's rows are removed, or, when the user reset their encrypted data,
+    /// kept and sent again as new records once the zone is created again.
     ///
     /// ```swift
-    /// for deletion in changes.deletions { try container.clear(in: deletion.zoneID) }
+    /// for deletion in changes.deletions {
+    ///     try container.save(deleted: deletion.zoneID, reason: deletion.reason)
+    /// }
     /// ```
-    func clear(in zoneID: CKRecordZone.ID) throws(DatabaseError) {
-        try clear(in: Zone(zoneID.zoneName, owner: zoneID.ownerName))
+    @available(macOS 14, iOS 17, tvOS 17, watchOS 10, *)
+    func save(deleted zoneID: CKRecordZone.ID, reason: CKDatabase.DatabaseChange.Deletion.Reason) throws(DatabaseError) {
+        try clear(in: zoneID.zone, resending: reason == .encryptedDataReset)
     }
 
     /// Saves why the server did not delete the record `id`, which this device sent.
@@ -267,6 +272,13 @@ extension Zone {
     }
 }
 
+private extension CKRecordZone.ID {
+    /// The zone, with its owner.
+    var zone: Zone {
+        Zone(zoneName, owner: ownerName)
+    }
+}
+
 private extension CKRecord.ID {
     /// The row's id: the record's name as a UUID, or `nil` for a record this package did not name.
     var rowID: UUID? {
@@ -275,7 +287,7 @@ private extension CKRecord.ID {
 
     /// The record's zone, with its owner.
     var zone: Zone {
-        Zone(zoneID.zoneName, owner: zoneID.ownerName)
+        zoneID.zone
     }
 }
 

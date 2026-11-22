@@ -422,6 +422,17 @@ private func noteContainer() -> RecordContainer {
         #expect(try container.send(id: id) == nil)
     }
 
+    @available(macOS 14, iOS 17, tvOS 17, watchOS 10, *)
+    @Test func aZoneDeletedByAnEncryptedDataResetIsSentAgain() throws {
+        let container = noteContainer()
+        try container.save(their: noteRecord("Hello"))
+        try container.save(deleted: zoneID, reason: .encryptedDataReset)
+        #expect(try container.pendingChanges().saves == [CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)])
+
+        try container.save(deleted: zoneID, reason: .deleted)
+        #expect(try container.row(id: id) == nil)
+    }
+
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     @Test func aConfirmedDeleteRemovesTheRow() throws {
         let container = noteContainer()
