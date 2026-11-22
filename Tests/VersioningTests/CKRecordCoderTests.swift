@@ -272,7 +272,10 @@ private func json(_ value: some Encodable) -> Data {
 
             let row = try #require(try container.row(id: id))
             let metadata = try #require(row.metadata)
-            let kept = try #require(try NSKeyedUnarchiver.unarchivedObject(ofClass: CKRecord.self, from: metadata))
+            // Archived the way system fields are, so it reads back through CKRecord(coder:).
+            let unarchiver = try NSKeyedUnarchiver(forReadingFrom: metadata)
+            unarchiver.requiresSecureCoding = true
+            let kept = try #require(CKRecord(coder: unarchiver))
             #expect(kept["title"] as? String == "Hello")
             #expect(row.type == type)
             #expect(row.base == nil)
