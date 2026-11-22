@@ -404,11 +404,9 @@ private func noteContainer() -> RecordContainer {
         try container.save(failed: try #require(try container.send(id: id)), error: error)
 
         let row = try #require(try container.row(id: id))
-        #expect(row.theirs == (try? JSONRepresentation(Note(id: id, title: "Theirs"))))
-        guard case .conflict = row.status else {
-            Issue.record("Expected a conflict, got \(row.status)")
-            return
-        }
+        #expect(row.base == (try? JSONRepresentation(Note(id: id, title: "Theirs"))))
+        #expect(row.ours == (try? JSONRepresentation(Note(id: id, title: "Ours"))), "Ours wins the conflicting title by default.")
+        #expect(row.status == .waitingToUpload)
     }
 }
 

@@ -48,10 +48,50 @@ extension RecordContainer {
 extension RecordContainer {
     /// `ours` merged with `theirs`, from `base` when there is one, by `type`'s own merge,
     /// with any file the merge wrote, as a merged `@Asset`, copied into the row `id`'s folder.
+    ///
+    /// The merge settles itself, so the user never sees it:
+    /// - Values that still conflict after the type's merge are settled by ``mergeStrategy``.
+    /// - A version that cannot be read as `type` counts as missing: an unreadable `base`
+    ///   makes a two-way merge, an unreadable `theirs` keeps `ours`, and an unreadable `ours`
+    ///   takes `theirs`. Fields the type does not have are dropped.
+    /// - A key one version lacks, as a version saved before a field was added, is read from
+    ///   the other version, so the older shape still decodes and leaves that field unchanged.
     func merged<Record: Codable & Mergeable>(_ ours: JSONRepresentation, with theirs: JSONRepresentation, from base: JSONRepresentation?, as type: Record.Type, id: UUID) throws -> JSONRepresentation {
-        let mine = try ours.decode(Record.self)
-        let other = try theirs.decode(Record.self)
-        let merged = try base.map { try mine.merging(with: other, from: $0.decode(Record.self)) } ?? mine.merging(with: other)
+        let mine = try? ours.filling(from: theirs).decode(Record.self)
+        let other = try? theirs.filling(from: ours).decode(Record.self)
+        let original = try? base?.filling(from: ours.filling(from: theirs)).decode(Record.self)
+        let merged: Record
+        switch (mine, other) {
+        case let (mine?, other?): merged = try settled(mine, with: other, from: original)
+        case let (nil, other?): merged = other
+        case (_?, nil): return ours
+        case (nil, nil): return theirs
+        }
         return storingAssets(Self.assetFiles(of: merged), in: try JSONRepresentation(merged), id: id)
+    }
+}
+
+private extension RecordContainer {
+    /// `ours` merged with `theirs` by the type's own merge, and, where that conflicts, again
+    /// with ``mergeStrategy`` keeping its side at each conflicting value.
+    func settled<Record: Codable & Mergeable>(_ ours: Record, with theirs: Record, from base: Record?) throws(MergeConflict) -> Record {
+        do {
+            if let base { return try ours.merging(with: theirs, from: base) }
+            return try ours.merging(with: theirs)
+        } catch {
+            let strategy = DefaultMergeStrategy<Record>(favoring: mergeStrategy.favoring?.retyped())
+            if let base { return try ours.merging(with: theirs, from: base, using: strategy) }
+            return try ours.merging(with: theirs, using: strategy)
+        }
+    }
+}
+
+private extension JSONRepresentation {
+    /// This object with each top-level key it lacks taken from `other`.
+    func filling(from other: JSONRepresentation) -> JSONRepresentation {
+        guard case .object(var pairs) = self, case .object(let others) = other else { return self }
+        let keys = Set(pairs.map { $0.key })
+        pairs += others.filter { !keys.contains($0.key) }
+        return .object(pairs)
     }
 }
