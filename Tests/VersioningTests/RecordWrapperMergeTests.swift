@@ -43,11 +43,11 @@ private func id(_ name: UUID) -> RecordID<Photo> {
 @Suite struct RecordWrapperValueTests {
     @Test func anAssetIsItsURL() throws {
         let url = try file(containing: "hello")
-        let asset = Asset(rawValue: url)
+        let asset = Asset<Data>(rawValue: url)
         #expect(asset.rawValue == url)
         #expect(asset.projectedValue == url)
         #expect(asset.wrappedValue == Data("hello".utf8))
-        #expect(Asset(rawValue: nil).wrappedValue == nil)
+        #expect(Asset<Data>(rawValue: nil).wrappedValue == nil)
     }
 
     @Test func anEncryptedValueIsItsValue() {
@@ -60,27 +60,43 @@ private func id(_ name: UUID) -> RecordID<Photo> {
 
 @Suite struct RecordWrapperMergeTests {
     @Test func assetsWithTheSameBytesDoNotConflict() throws {
-        let base = Asset(rawValue: try file(containing: "base"))
-        let ours = Asset(rawValue: try file(containing: "same"))
-        let theirs = Asset(rawValue: try file(containing: "same"))
+        let base = Asset<Data>(rawValue: try file(containing: "base"))
+        let ours = Asset<Data>(rawValue: try file(containing: "same"))
+        let theirs = Asset<Data>(rawValue: try file(containing: "same"))
         #expect(try ours.merging(with: theirs, from: base) == ours)
         #expect(try ours.merging(with: theirs) == ours)
     }
 
     @Test func anAssetKeepsTheSideThatChangedIt() throws {
-        let base = Asset(rawValue: try file(containing: "base"))
-        let copy = Asset(rawValue: try file(containing: "base"))
-        let theirs = Asset(rawValue: try file(containing: "theirs"))
+        let base = Asset<Data>(rawValue: try file(containing: "base"))
+        let copy = Asset<Data>(rawValue: try file(containing: "base"))
+        let theirs = Asset<Data>(rawValue: try file(containing: "theirs"))
         #expect(try copy.merging(with: theirs, from: base) == theirs, "A copy of the base's bytes is unchanged.")
         #expect(try theirs.merging(with: copy, from: base) == theirs)
     }
 
     @Test func differentAssetsConflict() throws {
-        let base = Asset(rawValue: try file(containing: "base"))
-        let ours = Asset(rawValue: try file(containing: "ours"))
-        let theirs = Asset(rawValue: try file(containing: "theirs"))
+        let base = Asset<Data>(rawValue: try file(containing: "base"))
+        let ours = Asset<Data>(rawValue: try file(containing: "ours"))
+        let theirs = Asset<Data>(rawValue: try file(containing: "theirs"))
         #expect(throws: MergeConflict()) { try ours.merging(with: theirs, from: base) }
-        #expect(throws: MergeConflict()) { try ours.merging(with: Asset()) }
+        #expect(throws: MergeConflict()) { try ours.merging(with: Asset<Data>()) }
+    }
+
+    @Test func aMergeableValueMergesTheBytesOfAllThreeFiles() throws {
+        let base = Asset(wrappedValue: Drawing(rawValue: Data([1])))
+        let ours = Asset(wrappedValue: Drawing(rawValue: Data([1, 2])))
+        let theirs = Asset(wrappedValue: Drawing(rawValue: Data([1, 3])))
+        let merged = try ours.merging(with: theirs, from: base)
+        #expect(merged.wrappedValue == Drawing(rawValue: Data([1, 2, 3])))
+        #expect(merged.projectedValue != ours.projectedValue)
+    }
+
+    @Test func aValueReadsAndWritesThroughItsBytes() {
+        var asset = Asset<Drawing>(wrappedValue: nil)
+        asset.wrappedValue = Drawing(rawValue: Data([4]))
+        #expect(asset.wrappedValue == Drawing(rawValue: Data([4])))
+        #expect(asset.projectedValue.map { try? Data(contentsOf: $0) } == Data([4]))
     }
 
     @Test func anEncryptedValueMergesByItsOwnMerge() throws {
@@ -112,5 +128,14 @@ private func id(_ name: UUID) -> RecordID<Photo> {
         let ours = Post(title: "Ours", hits: Hits(rawValue: 5), place: location(at: 20), photos: [id(c), id(a)])
         let theirs = Post(hits: Hits(rawValue: 4), place: location(at: 10, latitude: 5), photos: [id(a), id(b)])
         #expect(try ours.merging(with: theirs, from: base) == Post(title: "Ours", hits: Hits(rawValue: 6), place: location(at: 20), photos: [id(c), id(a), id(b)]))
+    }
+}
+
+/// An append-only drawing: each side's new strokes follow the base's.
+private struct Drawing: RawRepresentable, Equatable, Mergeable {
+    var rawValue: Data
+
+    func merging(with theirs: Drawing, from base: Drawing) throws(MergeConflict) -> Drawing {
+        Drawing(rawValue: rawValue + theirs.rawValue.dropFirst(base.rawValue.count))
     }
 }

@@ -20,7 +20,47 @@ private extension RecordContainer {
     }
 }
 
+/// An append-only drawing: each side's new strokes follow the base's.
+private struct Drawing: RawRepresentable, Equatable, Mergeable {
+    var rawValue: Data
+
+    func merging(with theirs: Drawing, from base: Drawing) throws(MergeConflict) -> Drawing {
+        Drawing(rawValue: rawValue + theirs.rawValue.dropFirst(base.rawValue.count))
+    }
+}
+
+private struct Sketch: Codable, Identifiable, Mergeable {
+    var id = UUID()
+    @Asset var drawing: Drawing? = nil
+}
+
 @Suite struct RecordContainerAssetTests {
+    @Test func bothSidesChangesToADrawingMergeIntoAStoredFile() throws {
+        let container = RecordContainer()
+        container.register(Sketch.self)
+        var sketch = Sketch(drawing: Drawing(rawValue: Data([1])))
+        try container.save(our: sketch, zone: "Sketches")
+        try container.update(id: sketch.id) { row in
+            row.metadata = Data([1])
+            row.confirm(row.ours!)
+        }
+        sketch.drawing = Drawing(rawValue: Data([1, 2]))
+        try container.save(our: sketch, zone: "Sketches")
+
+        let theirs = Sketch(id: sketch.id, drawing: Drawing(rawValue: Data([1, 3])))
+        try container.save(their: JSONRepresentation(theirs), id: sketch.id, zone: "Sketches", type: "Sketch", metadata: Data([2]))
+
+        let row = try #require(try container.row(id: sketch.id))
+        #expect(row.status == .waitingToUpload, "\(row)")
+        guard case .string(let text)? = row.ours?["drawing"], let merged = URL(string: text) else {
+            Issue.record("Expected a merged drawing")
+            return
+        }
+        #expect(text.hasPrefix(container.assetFolder(id: sketch.id).absoluteString))
+        #expect(merged.lastPathComponent.hasPrefix("drawing-"))
+        #expect(try Data(contentsOf: merged) == Data([1, 2, 3]))
+    }
+
     @Test func savedBytesAreCopiedIntoTheContainer() throws {
         let container = RecordContainer()
         let photo = Photo(picture: Data([1, 2, 3]))

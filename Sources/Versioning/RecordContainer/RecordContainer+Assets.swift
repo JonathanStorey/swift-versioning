@@ -16,7 +16,9 @@ extension RecordContainer {
         let folder = assetFolder(id: id)
         var stored: [String: JSONRepresentation] = [:]
         for (key, file) in files where !file.absoluteString.hasPrefix(folder.absoluteString) {
-            let copy = folder.appendingPathComponent(UUID().uuidString)
+            // Named for its field, so a folder reads at a glance, and unique, so no version's
+            // file is ever replaced.
+            let copy = folder.appendingPathComponent("\(key)-\(UUID().uuidString)")
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 try FileManager.default.copyItem(at: file, to: copy)
@@ -51,7 +53,7 @@ extension RecordContainer {
     static func assetFiles(of record: Any) -> [String: URL] {
         var files: [String: URL] = [:]
         for child in Mirror(reflecting: record).children {
-            guard let label = child.label, let file = (child.value as? Asset)?.projectedValue else { continue }
+            guard let label = child.label, let file = (child.value as? any AnyAsset)?.projectedValue else { continue }
             // A property wrapper's storage is the property's name after an underscore.
             files[label.hasPrefix("_") ? String(label.dropFirst()) : label] = file
         }
