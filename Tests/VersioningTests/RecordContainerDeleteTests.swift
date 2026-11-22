@@ -34,6 +34,24 @@ private extension RecordContainer {
         #expect(try container.row(id: mine.id) == nil)
     }
 
+    @Test func resendingAZoneKeepsEachRecordAsNew() throws {
+        let synced = Note(title: "Synced"), edited = Note(title: "Edited"), deleted = Note(title: "Deleted"), elsewhere = Note(title: "Elsewhere")
+        let container = try RecordContainer.synced(synced)
+        for note in [edited, deleted, elsewhere] {
+            try container.save(their: JSONRepresentation(Note(id: note.id, title: "Base")), id: note.id, zone: note.id == elsewhere.id ? "Other" : "Notes", type: "Note", metadata: Data([1]))
+        }
+        try container.save(our: edited, zone: "Notes")
+        try container.delete(id: deleted.id)
+
+        try container.clear(in: "Notes", resending: true)
+
+        #expect(try container.row(id: synced.id) == RecordContainer.Row(id: synced.id, zone: "Notes", type: "Note", ours: JSONRepresentation(synced)))
+        #expect(try container.row(id: edited.id) == RecordContainer.Row(id: edited.id, zone: "Notes", type: "Note", ours: JSONRepresentation(edited)))
+        #expect(try container.row(id: deleted.id) == nil)
+        #expect(try container.row(id: elsewhere.id)?.status == .synced)
+        #expect(try container.row(id: synced.id)?.status == .waitingToUpload)
+    }
+
     @Test func aRecordNeverUploadedIsRemovedAtOnce() throws {
         let container = RecordContainer()
         let note = Note(title: "Draft")

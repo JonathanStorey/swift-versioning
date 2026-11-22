@@ -126,14 +126,24 @@ extension RecordContainer {
     /// Removes every row in `zone` on this device, sending nothing, as when the zone was
     /// deleted on the server. Unsent changes in the zone are dropped, since the zone they
     /// belong to is gone.
-    func clear(in zone: Zone) throws(DatabaseError) {
+    ///
+    /// When `resending` is `true`, as when the server lost the zone because the user reset
+    /// their encrypted data, each record is kept instead and sent again as new: its content,
+    /// this device's changes or else the server's last version, becomes `ours`, and the rest
+    /// is forgotten. A record waiting to upload its delete is removed.
+    func clear(in zone: Zone, resending: Bool = false) throws(DatabaseError) {
         try locked { () throws(DatabaseError) in
             var ids: [UUID] = []
             try run("SELECT id FROM record WHERE zone = ? AND owner = ?", zone.name, zone.owner) { (statement) throws(DatabaseError) in
                 if let id = statement.text(at: 0).flatMap(UUID.init(uuidString:)) { ids.append(id) }
             }
-            try run("DELETE FROM record WHERE zone = ? AND owner = ?", zone.name, zone.owner)
-            for id in ids { removeAssets(id: id) }
+            for id in ids {
+                guard resending, let row = try row(id: id), !row.isDeleted, let content = row.ours ?? row.base else {
+                    try remove(id: id)
+                    continue
+                }
+                try write(Row(id: id, zone: row.zone, type: row.type, ours: content))
+            }
         }
     }
 
