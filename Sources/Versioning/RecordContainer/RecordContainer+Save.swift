@@ -127,6 +127,19 @@ extension RecordContainer {
         }
     }
 
+    /// The id, zone and kind of every row waiting to upload: a save, or, with `isDeleted`, a delete.
+    func pendingRows() throws(DatabaseError) -> [(id: UUID, zone: Zone, isDeleted: Bool)] {
+        var rows: [(id: UUID, zone: Zone, isDeleted: Bool)] = []
+        try run("""
+            SELECT id, zone, owner, is_deleted FROM record
+            WHERE theirs IS NULL AND error IS NULL AND (ours IS NOT NULL OR is_deleted = 1)
+            """) { (statement) throws(DatabaseError) in
+            guard let id = statement.text(at: 0).flatMap(UUID.init(uuidString:)) else { return }
+            rows.append((id, Zone(statement.text(at: 1) ?? "", owner: statement.text(at: 2) ?? ""), sqlite3_column_int(statement, 3) != 0))
+        }
+        return rows
+    }
+
     /// Changes the row for `id` by `change`, in one locked read and write. With no row for
     /// `id`, changes `new` and adds it, or does nothing when `new` is `nil`.
     func update(id: UUID, inserting new: Row? = nil, _ change: (inout Row) -> Void) throws(DatabaseError) {
