@@ -507,4 +507,39 @@ private func noteContainer() -> RecordContainer {
         }
     }
 }
+
+private struct Attachment: Codable, Mergeable {
+    var id: UUID
+    @Asset var file: Data? = nil
+}
+
+@Suite struct RecordContainerAssetCloudKitTests {
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func keepsADownloadedAssetAfterTheEngineRemovesItsFile() throws {
+        let container = RecordContainer()
+        container.register(Attachment.self)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data([7]).write(to: file)
+        try container.save(their: record(["id": id.uuidString as NSString, "file": CKAsset(fileURL: file)], type: "Attachment"))
+        try FileManager.default.removeItem(at: file)
+
+        guard case .string(let text)? = try container.row(id: id)?.base?["file"], let stored = URL(string: text) else {
+            Issue.record("Expected a stored file")
+            return
+        }
+        #expect(text.hasPrefix(container.assetFolder(id: id).absoluteString))
+        #expect(try Data(contentsOf: stored) == Data([7]))
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func sendsTheStoredFile() throws {
+        let container = RecordContainer()
+        container.register(Attachment.self)
+        try container.save(our: Attachment(id: id, file: Data([8])), id: \.id, zone: "Notes")
+
+        let sent = try #require(try container.send(id: id))
+        let asset = try #require(sent["file"] as? CKAsset)
+        #expect(asset.fileURL?.absoluteString.hasPrefix(container.assetFolder(id: id).absoluteString) == true)
+    }
+}
 #endif

@@ -25,7 +25,8 @@ extension RecordContainer {
     ///
     /// The row's id comes from the value at `id`, by ``recordID(for:type:)``. A new id adds
     /// a row. An existing id replaces `ours`, clears `isDeleted` and `error`, and keeps
-    /// `base`, `theirs`, `metadata` and the zone, in one statement. Asserts that a record
+    /// `base`, `theirs`, `metadata` and the zone, in one statement. Each `@Asset` file is
+    /// copied into the container, so the row keeps it however the original changes. Asserts that a record
     /// saved to ``Zone/public`` has no `@Encrypted` values, which the public database rejects.
     ///
     /// ```swift
@@ -35,12 +36,13 @@ extension RecordContainer {
         assert(zone != .public || !Mirror(reflecting: record).children.contains { $0.value is any EncryptedValue },
                "The public database cannot store @Encrypted values, so \(Record.self) cannot be saved to Zone.public.")
         let id = try Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self))
-        let ours = try Self.text(JSONRepresentation(record))
+        let ours = try Self.text(storingAssets(Self.assetFiles(of: record), in: JSONRepresentation(record), id: id))
         try locked {
             try run("""
                 INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
                 """, id.uuidString, zone.name, zone.owner, Self.recordType(of: Record.self), ours)
+            if let row = try row(id: id) { removeUnusedAssets(of: row) }
         }
     }
 
@@ -115,7 +117,10 @@ extension RecordContainer {
     /// Removes every row on this device, sending nothing, as when the iCloud account signs
     /// out or changes. Unlike ``delete(id:)``, nothing is deleted on the server.
     func clear() throws(DatabaseError) {
-        try locked { () throws(DatabaseError) in try run("DELETE FROM record") }
+        try locked { () throws(DatabaseError) in
+            try run("DELETE FROM record")
+            try? FileManager.default.removeItem(at: assets)
+        }
     }
 
     /// Removes every row in `zone` on this device, sending nothing, as when the zone was
@@ -123,7 +128,12 @@ extension RecordContainer {
     /// belong to is gone.
     func clear(in zone: Zone) throws(DatabaseError) {
         try locked { () throws(DatabaseError) in
+            var ids: [UUID] = []
+            try run("SELECT id FROM record WHERE zone = ? AND owner = ?", zone.name, zone.owner) { (statement) throws(DatabaseError) in
+                if let id = statement.text(at: 0).flatMap(UUID.init(uuidString:)) { ids.append(id) }
+            }
             try run("DELETE FROM record WHERE zone = ? AND owner = ?", zone.name, zone.owner)
+            for id in ids { removeAssets(id: id) }
         }
     }
 
@@ -183,6 +193,7 @@ private extension RecordContainer {
     /// Removes the row for `id`.
     func remove(id: UUID) throws(DatabaseError) {
         try run("DELETE FROM record WHERE id = ?", id.uuidString)
+        removeAssets(id: id)
     }
 
     /// Writes every column of `row`, replacing any row with the same id.
@@ -195,6 +206,7 @@ private extension RecordContainer {
             try row.ours.map { (json) throws(DatabaseError) in try Self.text(json) },
             try row.theirs.map { (json) throws(DatabaseError) in try Self.text(json) },
             row.isDeleted, row.error)
+        removeUnusedAssets(of: row)
     }
 
     /// Prepares `sql`, binds `values` in order, and steps through it, passing each result row to `body`.
