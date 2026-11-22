@@ -25,6 +25,12 @@ public struct Encrypted<Value> {
     }
 }
 
+/// An `@Encrypted` value, which a record stores in `encryptedValues`, and which the public
+/// database cannot store.
+protocol EncryptedValue {}
+
+extension Encrypted: EncryptedValue {}
+
 extension Encrypted: Equatable where Value: Equatable {}
 extension Encrypted: Hashable where Value: Hashable {}
 extension Encrypted: Sendable where Value: Sendable {}

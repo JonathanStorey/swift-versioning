@@ -8,47 +8,62 @@ extension RecordContainer {
     ///
     /// The record's name, a UUID from ``recordID(for:type:)``, is the row's id, and its zone and
     /// owner come from the record's zone. The decoded value merges into the row as ``save(their:id:zone:type:metadata:)``
-    /// describes. Throws, saving nothing, when the record's name is not a UUID, its type is
-    /// not registered, or the type cannot decode it.
-    func save(their record: CKRecord) throws {
-        let recordID = record.recordID
-        try save(
-            their: json(of: record),
-            id: recordID.rowID(),
-            zone: Zone(recordID.zoneID.zoneName, owner: recordID.zoneID.ownerName),
-            type: record.recordType,
-            metadata: record.systemFields
-        )
+    /// describes. A record whose type is not registered, or that the type cannot decode, is
+    /// kept whole in `metadata` with the reason in `error`, so nothing is lost. A record whose
+    /// name is not a UUID was not saved by this package and is skipped. Throws only when the
+    /// database fails.
+    func save(their record: CKRecord) throws(DatabaseError) {
+        guard let id = record.recordID.rowID else { return }
+        let json: JSONRepresentation
+        do {
+            json = try self.json(of: record)
+        } catch {
+            return try save(unreadable: record, id: id, reason: error)
+        }
+        try save(their: json, id: id, zone: record.recordID.zone, type: record.recordType, metadata: record.systemFields)
     }
 
     /// The record to upload for the row `id`, or `nil` when it has nothing to upload.
     ///
     /// The record starts from the row's system fields, so the server can tell which version
     /// it replaces, or, before the server first confirms it or when they cannot be read,
-    /// from a new record in the row's zone. `ours` is encoded into it as the registered type. A row that is synced,
-    /// deleted, waiting to merge, or rejected sends nothing.
+    /// from a new record in the row's zone. `ours` is encoded into it as the registered type.
+    /// A row that is synced, deleted, waiting to merge, or rejected sends nothing. A row that
+    /// cannot be encoded sends nothing, with the reason in `error`. Throws only when the
+    /// database fails.
     ///
     /// ```swift
     /// let record = try container.send(id: note.id)
     /// ```
-    func send(id: UUID) throws -> CKRecord? {
+    func send(id: UUID) throws(DatabaseError) -> CKRecord? {
         guard let row = try row(id: id), let ours = row.ours, row.status == .waitingToUpload, !row.isDeleted else { return nil }
         let record = row.metadata.flatMap(CKRecord.init(systemFields:)) ?? CKRecord(
             recordType: row.type,
             recordID: CKRecord.ID(recordName: id.uuidString, zoneID: CKRecordZone.ID(zoneName: row.zone.name, ownerName: row.zone.owner))
         )
-        try CKRecordEncoder().encode(ours, as: registeredType(named: row.type), to: record)
-        return record
+        do {
+            try CKRecordEncoder().encode(ours, as: registeredType(named: row.type), to: record)
+            return record
+        } catch {
+            try update(id: id) { $0.error = "This device could not send its \(row.type): \(error)" }
+            return nil
+        }
     }
 
     /// Saves `record`, which this device sent and the server saved, as the row's `base`,
     /// with its system fields as `metadata`.
     ///
     /// Nothing merges, as ``Row/confirm(_:)`` describes, so changes saved while the record
-    /// was on its way stay waiting to upload.
-    func save(sent record: CKRecord) throws {
-        let json = try json(of: record)
-        try update(id: record.recordID.rowID()) { row in
+    /// was on its way stay waiting to upload. Throws only when the database fails.
+    func save(sent record: CKRecord) throws(DatabaseError) {
+        guard let id = record.recordID.rowID else { return }
+        let json: JSONRepresentation
+        do {
+            json = try self.json(of: record)
+        } catch {
+            return try save(unreadable: record, id: id, reason: error)
+        }
+        try update(id: id) { row in
             row.metadata = record.systemFields
             row.confirm(json)
         }
@@ -61,11 +76,13 @@ extension RecordContainer {
     /// - A record the server no longer has loses its `metadata`, so the next send creates it again.
     /// - A missing zone, or a failure worth retrying, changes nothing, so the record is sent again.
     /// - Any other error is saved in `error`, and nothing more uploads until the record is saved again.
-    func save(failed record: CKRecord, error: CKError) throws {
+    ///
+    /// Throws only when the database fails.
+    func save(failed record: CKRecord, error: CKError) throws(DatabaseError) {
         if error.code == .serverRecordChanged, let server = error.serverRecord {
             return try save(their: server)
         }
-        let id = try record.recordID.rowID()
+        guard let id = record.recordID.rowID else { return }
         switch error.code {
         case .unknownItem:
             try update(id: id) { $0.metadata = nil }
@@ -82,6 +99,16 @@ private extension RecordContainer {
     /// The JSON of `record` decoded as its registered type.
     func json(of record: CKRecord) throws -> JSONRepresentation {
         try CKRecordDecoder().json(registeredType(named: record.recordType), from: record)
+    }
+
+    /// Keeps `record`, which this device cannot read, whole in the row's `metadata`, with
+    /// `reason` in `error`, so a later version of the app can read it. `ours` and `base` are
+    /// unchanged, and nothing uploads until it is settled.
+    func save(unreadable record: CKRecord, id: UUID, reason: any Error) throws(DatabaseError) {
+        try update(id: id, inserting: Row(id: id, zone: record.recordID.zone, type: record.recordType)) { row in
+            row.metadata = record.archived
+            row.error = "This device could not read the server's \(record.recordType): \(reason)"
+        }
     }
 }
 
@@ -102,12 +129,14 @@ private extension CKRecordEncoder {
 }
 
 private extension CKRecord.ID {
-    /// The row's id: the record's name, which must be a UUID.
-    func rowID() throws -> UUID {
-        guard let id = UUID(uuidString: recordName) else {
-            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Record name \"\(recordName)\" is not a UUID."))
-        }
-        return id
+    /// The row's id: the record's name as a UUID, or `nil` for a record this package did not name.
+    var rowID: UUID? {
+        UUID(uuidString: recordName)
+    }
+
+    /// The record's zone, with its owner.
+    var zone: Zone {
+        Zone(zoneID.zoneName, owner: zoneID.ownerName)
     }
 }
 
@@ -119,6 +148,14 @@ private extension CKRecord {
         unarchiver.requiresSecureCoding = true
         defer { unarchiver.finishDecoding() }
         self.init(coder: unarchiver)
+    }
+
+    /// The whole record archived, its values with its system fields.
+    var archived: Data {
+        let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+        encode(with: archiver)
+        archiver.finishEncoding()
+        return archiver.encodedData
     }
 
     /// The record's system fields, archived, without its values.

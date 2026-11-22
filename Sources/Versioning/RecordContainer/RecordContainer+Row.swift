@@ -19,7 +19,9 @@ extension RecordContainer {
         var theirs: JSONRepresentation? = nil
         /// A local delete the server has not confirmed.
         var isDeleted = false
-        /// Why `theirs` could not merge, or, with no `theirs`, why the server rejected the upload.
+        /// Why `theirs` could not merge, or, with no `theirs`, why the server rejected the
+        /// upload, why this device could not send it, or why this device could not read the
+        /// server's version, which is then kept whole in `metadata`.
         var error: String? = nil
     }
 }

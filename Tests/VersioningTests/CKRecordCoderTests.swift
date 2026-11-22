@@ -256,14 +256,28 @@ private func json(_ value: some Encodable) -> Data {
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    @Test func throwsWithoutSaving() throws {
+    @Test func skipsARecordNotNamedByAUUID() throws {
         let container = RecordContainer()
         container.register(Note.self)
-        let unnamed = record(["title": "Hello" as NSString], type: "Note", name: "not-a-uuid")
-        #expect(throws: DecodingError.self) { try container.save(their: unnamed) }
-        #expect(throws: DecodingError.self) { try container.save(their: record(type: "Other")) }
-        #expect(throws: DecodingError.self) { try container.save(their: record(type: "Note")) }
+        try container.save(their: record(["title": "Hello" as NSString], type: "Note", name: "not-a-uuid"))
         #expect(try container.row(id: id) == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func keepsARecordItCannotReadWithTheReason() throws {
+        for (registered, type) in [(true, "Note"), (false, "Other")] {
+            let container = RecordContainer()
+            if registered { container.register(Note.self) }
+            try container.save(their: record(["title": "Hello" as NSString], type: type))
+
+            let row = try #require(try container.row(id: id))
+            let metadata = try #require(row.metadata)
+            let kept = try #require(try NSKeyedUnarchiver.unarchivedObject(ofClass: CKRecord.self, from: metadata))
+            #expect(kept["title"] as? String == "Hello")
+            #expect(row.type == type)
+            #expect(row.base == nil)
+            #expect(row.error?.contains("could not read") == true, "\(row)")
+        }
     }
 }
 
@@ -347,6 +361,14 @@ private func noteContainer() -> RecordContainer {
         #expect(try container.send(id: id) == nil)
         try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
         #expect(try container.send(id: id) != nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aRecordThatCannotBeEncodedIsMarked() throws {
+        let container = RecordContainer()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        #expect(try container.send(id: id) == nil)
+        #expect(try container.row(id: id)?.error?.contains("could not send") == true)
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)

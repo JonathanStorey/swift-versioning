@@ -109,9 +109,20 @@ private extension RecordContainer {
         #expect(row.error != nil)
     }
 
-    @Test func anUnregisteredTypeThrows() {
-        #expect(throws: DecodingError.self) {
-            try RecordContainer().save(their: json(Note(id: id)), id: id, zone: "Notes", type: "Note", metadata: nil)
-        }
+    @Test func anUnregisteredTypeSavesWithNothingToMerge() throws {
+        let container = RecordContainer()
+        try container.save(their: json(Note(id: id)), id: id, zone: "Notes", type: "Note", metadata: nil)
+        #expect(try container.row(id: id)?.base == json(Note(id: id)))
+    }
+
+    @Test func anUnregisteredTypeWaitsWhenItWouldMerge() throws {
+        let container = RecordContainer()
+        try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
+        try container.save(their: json(Note(id: id)), id: id, zone: "Notes", type: "Note", metadata: nil)
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.theirs == json(Note(id: id)))
+        #expect(row.ours == json(Note(id: id, title: "Ours")))
+        #expect(row.error?.contains("not registered") == true)
     }
 }
