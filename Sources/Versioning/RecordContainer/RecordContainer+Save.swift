@@ -137,6 +137,23 @@ extension RecordContainer {
         }
     }
 
+    /// Every zone that holds a row, for making sure each exists before its records upload.
+    ///
+    /// Only a ``Zone/Database/private`` zone can be created by this device. A shared zone
+    /// belongs to its owner, and the public zone always exists.
+    ///
+    /// ```swift
+    /// let missing = try container.zones().filter { $0.database == .private }
+    /// syncEngine.state.add(pendingDatabaseChanges: missing.map { .saveZone(CKRecordZone(zoneID: $0.zoneID)) })
+    /// ```
+    func zones() throws(DatabaseError) -> Set<Zone> {
+        var zones: Set<Zone> = []
+        try run("SELECT DISTINCT zone, owner FROM record") { (statement) throws(DatabaseError) in
+            zones.insert(Zone(statement.text(at: 0) ?? "", owner: statement.text(at: 1) ?? ""))
+        }
+        return zones
+    }
+
     /// The id, zone and kind of every row waiting to upload: a save, or, with `isDeleted`, a delete.
     func pendingRows() throws(DatabaseError) -> [(id: UUID, zone: Zone, isDeleted: Bool)] {
         var rows: [(id: UUID, zone: Zone, isDeleted: Bool)] = []
