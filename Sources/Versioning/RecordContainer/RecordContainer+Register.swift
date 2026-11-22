@@ -10,12 +10,25 @@ extension RecordContainer {
     /// A plain struct needs no `Identifiable` conformance. Its id is chosen where it is
     /// saved, the way `List(_:id:)` takes any data.
     ///
+    /// Its schema is stored too. When a type was registered before with a schema it can no
+    /// longer read, as when a property was added that is not optional, it asserts once,
+    /// since records saved under the older schema would be skipped. The new schema is
+    /// stored first, so the next launch runs on.
+    ///
     /// ```swift
     /// let container = RecordContainer()
     /// container.register(Note.self)
     /// ```
     func register<Record: Codable & Mergeable>(_ type: Record.Type) {
-        locked { registrations[Self.recordType(of: type)] = type }
+        let name = Self.recordType(of: type)
+        locked { registrations[name] = type }
+        guard let schema = try? JSONSchema(for: type) else { return }
+        let stored = storedSchema(named: name)
+        guard stored != schema else { return }
+        store(schema, named: name)
+        if let stored {
+            assert(schema.isSuperset(of: stored), "\(name) can no longer read records saved under its previous schema, so they would be skipped. Make each new property optional, and keep each property's type.")
+        }
     }
 
     /// The registered Swift type for the record type named `type`.
@@ -69,7 +82,8 @@ extension RecordContainer {
         case (_?, nil): return ours
         case (nil, nil): return theirs
         }
-        return storingAssets(Self.assetFiles(of: merged), in: try JSONRepresentation(merged), id: id)
+        let json = try JSONRepresentation(merged)
+        return storingAssets(Self.assetFiles(of: merged, in: json), in: json, id: id)
     }
 }
 
@@ -81,7 +95,7 @@ private extension RecordContainer {
             if let base { return try ours.merging(with: theirs, from: base) }
             return try ours.merging(with: theirs)
         } catch {
-            let strategy = DefaultMergeStrategy<Record>(favoring: mergeStrategy.favoring?.retyped())
+            let strategy = DefaultMergeStrategy<Record>(favoring: (mergeStrategy.favoring ?? .ours).retyped())
             if let base { return try ours.merging(with: theirs, from: base, using: strategy) }
             return try ours.merging(with: theirs, using: strategy)
         }

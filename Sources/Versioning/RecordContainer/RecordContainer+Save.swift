@@ -23,6 +23,10 @@ extension RecordContainer {
         CREATE TABLE IF NOT EXISTS engine_state (
             id INTEGER PRIMARY KEY CHECK (id = 0),
             data BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS record_type (
+            name TEXT PRIMARY KEY NOT NULL,
+            schema TEXT NOT NULL
         )
         """
 
@@ -41,13 +45,14 @@ extension RecordContainer {
         assert(zone != .public || !Mirror(reflecting: record).properties.contains { $0.value is any EncryptedValue },
                "The public database cannot store @Encrypted values, so \(Record.self) cannot be saved to Zone.public.")
         let id = try Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self))
-        let ours = try Self.text(portable(storingAssets(Self.assetFiles(of: record), in: JSONRepresentation(record), id: id), id: id))
+        let json = try JSONRepresentation(record)
+        let ours = try Self.text(portable(storingAssets(Self.assetFiles(of: record, in: json), in: json, id: id), id: id))
         try locked {
             try run("""
                 INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
                 """, id.uuidString, zone.name, zone.owner, Self.recordType(of: Record.self), ours)
-            if let row = try row(id: id) { removeUnusedAssets(of: row) }
+            sweepAssets(id: id, of: try row(id: id))
         }
     }
 
@@ -173,6 +178,19 @@ extension RecordContainer {
         }
     }
 
+    /// The schema the record type `name` was last registered with, or `nil` when it has none.
+    func storedSchema(named name: String) -> JSONSchema? {
+        var text: String?
+        try? run("SELECT schema FROM record_type WHERE name = ?", name) { (statement) throws(DatabaseError) in text = statement.text(at: 0) }
+        return text.flatMap { try? JSONDecoder().decode(JSONSchema.self, from: Data($0.utf8)) }
+    }
+
+    /// Keeps `schema` as the one the record type `name` was last registered with.
+    func store(_ schema: JSONSchema, named name: String) {
+        guard let data = try? JSONEncoder().encode(schema) else { return }
+        try? run("INSERT OR REPLACE INTO record_type (name, schema) VALUES (?, ?)", name, String(decoding: data, as: UTF8.self))
+    }
+
     /// Every zone that holds a row, for making sure each exists before its records upload.
     ///
     /// Only a ``Zone/Database/private`` zone can be created by this device. A shared zone
@@ -247,7 +265,7 @@ private extension RecordContainer {
     /// Removes the row for `id`.
     func remove(id: UUID) throws(DatabaseError) {
         try run("DELETE FROM record WHERE id = ?", id.uuidString)
-        removeAssets(id: id)
+        sweepAssets(id: id, of: nil)
     }
 
     /// Writes every column of `row`, replacing any row with the same id.
@@ -261,7 +279,7 @@ private extension RecordContainer {
             """, row.id.uuidString, row.zone.name, row.zone.owner, row.type, row.metadata,
             try text(row.base), try text(row.ours), try text(row.theirs), try text(row.sent),
             row.isDeleted, row.error)
-        removeUnusedAssets(of: row)
+        sweepAssets(id: row.id, of: row)
     }
 
     /// Prepares `sql`, binds `values` in order, and steps through it, passing each result row to `body`.
