@@ -40,24 +40,6 @@ extension RecordContainer {
         return stored.isEmpty ? json : json.replacing(stored)
     }
 
-    /// Removes each file in the row's folder that none of `base`, `ours`, `theirs` and `sent`
-    /// points at, and the folder once nothing is left in it.
-    func removeUnusedAssets(of row: Row) {
-        let folder = assetFolder(id: row.id)
-        guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
-        let used = Set([row.base, row.ours, row.theirs, row.sent].compactMap { $0 }.flatMap(\.strings).compactMap { text in
-            text.hasPrefix(folder.absoluteString) ? URL(string: text)?.lastPathComponent : nil
-        })
-        let unused = files.filter { !used.contains($0.lastPathComponent) }
-        for file in unused { try? FileManager.default.removeItem(at: file) }
-        if unused.count == files.count { try? FileManager.default.removeItem(at: folder) }
-    }
-
-    /// Removes the row's folder and every asset file in it.
-    func removeAssets(id: UUID) {
-        try? FileManager.default.removeItem(at: assetFolder(id: id))
-    }
-
     /// `json`, the encoding of `record`, with the file of each `Asset` property of `record`
     /// copied into the row's folder, as ``storingAssets(_:in:id:)`` does.
     func storingAssets(of record: Any, in json: JSONRepresentation, id: UUID) -> JSONRepresentation {
@@ -123,15 +105,5 @@ private extension JSONRepresentation {
             guard case .string(let text) = pair.value, let mapped = transform(text) else { return pair }
             return (key: pair.key, value: .string(mapped))
         })
-    }
-
-    /// Every string in this value, at any depth.
-    var strings: [String] {
-        switch self {
-        case .string(let text): [text]
-        case .array(let elements): elements.flatMap(\.strings)
-        case .object(let pairs): pairs.flatMap { $0.value.strings }
-        default: []
-        }
     }
 }

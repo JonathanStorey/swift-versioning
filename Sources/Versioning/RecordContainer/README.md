@@ -276,12 +276,10 @@ The app's sandbox can move, as iOS does when an app updates, so absolute file UR
 
 ### Cleaning up
 
-`removeUnusedAssets(of:)` deletes every file in a row's folder that none of `base`, `ours`, `theirs` and `sent` still points at, and removes the folder once it is empty. `removeAssets(id:)` deletes a row's whole folder.
+Two `sweepAssets` overloads do all the cleanup.
 
-Both run through one of two `sweepAssets` overloads, which decide when.
-
-- `sweepAssets(of:)` is for a row that was written. It removes the row's unused files.
-- `sweepAssets(id:)` is for a row that was removed. It removes the row's whole folder.
+- `sweepAssets(of:)` is for a row that was written. It deletes every file in the row's folder that none of `base`, `ours`, `theirs` and `sent` still points at, and removes the folder once it is empty.
+- `sweepAssets(id:)` is for a row that was removed. It deletes the row's whole folder.
 
 Outside a transaction, either one cleans up at once. Inside a transaction, it adds the row's id to `assetsToSweep` and cleanup waits. `assetsToSweep` is private, so only `transaction(_:)` and the two overloads can touch it.
 
@@ -397,8 +395,6 @@ Every function below is internal to the module unless marked otherwise.
 | `func storingAssets(of record: Any, in json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Finds a record's asset files and copies them into the row's folder. |
 | `func storingAssets(_ files: [String: URL], in json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Copies files listed by field into the row's folder, reusing identical ones. |
 | `func JSONRepresentation.assetFiles(of record: Any) -> [String: URL]` (private) | Each asset file by the JSON key that holds it. |
-| `func removeUnusedAssets(of row: Row)` | Deletes files no version of the row uses. |
-| `func removeAssets(id: UUID)` | Deletes a row's whole folder. |
 | `func portable(_ json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Rewrites the row's file URLs as relative names. |
 | `func resolved(_ json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Turns relative names back into URLs. |
 | `var Mirror.properties: [(name: String, value: Any)]` | Each stored property, with a property wrapper under its own name. |

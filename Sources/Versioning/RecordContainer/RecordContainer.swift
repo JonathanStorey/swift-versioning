@@ -138,29 +138,43 @@ extension RecordContainer {
         }
     }
 
-    /// Removes each file in the folder of `row` that it no longer uses: now, or, inside a
+    /// Removes each file in the folder of `row` that none of its `base`, `ours`, `theirs`
+    /// and `sent` points at, and the folder once nothing is left in it: now, or, inside a
     /// transaction, once it ends, so a rolled-back write still finds its files.
     func sweepAssets(of row: Row) {
-        if assetsToSweep != nil {
-            assetsToSweep?.insert(row.id)
-        } else {
-            removeUnusedAssets(of: row)
-        }
+        guard assetsToSweep == nil else { assetsToSweep?.insert(row.id); return }
+        let folder = assetFolder(id: row.id)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
+        let used = Set([row.base, row.ours, row.theirs, row.sent].compactMap { $0 }.flatMap(\.strings).compactMap { text in
+            text.hasPrefix(folder.absoluteString) ? URL(string: text)?.lastPathComponent : nil
+        })
+        let unused = files.filter { !used.contains($0.lastPathComponent) }
+        for file in unused { try? FileManager.default.removeItem(at: file) }
+        if unused.count == files.count { try? FileManager.default.removeItem(at: folder) }
     }
 
-    /// Removes the folder of the removed row `id`: now, or, inside a transaction, once it
-    /// ends, so a rolled-back removal still finds its files.
+    /// Removes the folder of the removed row `id` and every file in it: now, or, inside a
+    /// transaction, once it ends, so a rolled-back removal still finds its files.
     func sweepAssets(id: UUID) {
-        if assetsToSweep != nil {
-            assetsToSweep?.insert(id)
-        } else {
-            removeAssets(id: id)
-        }
+        guard assetsToSweep == nil else { assetsToSweep?.insert(id); return }
+        try? FileManager.default.removeItem(at: assetFolder(id: id))
     }
 
     /// Runs one or more SQL statements that return no rows.
     func execute(_ sql: String) throws(DatabaseError) {
         let code = sqlite3_exec(connection, sql, nil, nil, nil)
         guard code == SQLITE_OK else { throw DatabaseError(code: code, connection: connection) }
+    }
+}
+
+private extension JSONRepresentation {
+    /// Every string in this value, at any depth.
+    var strings: [String] {
+        switch self {
+        case .string(let text): [text]
+        case .array(let elements): elements.flatMap(\.strings)
+        case .object(let pairs): pairs.flatMap { $0.value.strings }
+        default: []
+        }
     }
 }
