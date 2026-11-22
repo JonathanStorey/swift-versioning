@@ -2,17 +2,18 @@ import Foundation
 import Testing
 @testable import Versioning
 
-private struct Folder: Codable, Identifiable {
-    var id: UUID
+/// A plain struct, so a reference needs nothing from its target.
+private struct Folder: Codable {
+    var slug: String
 }
 
 private struct Note: Codable, Hashable, Identifiable {
     var id: UUID
-    @Reference(Folder.self) var folder: Folder.ID? = nil
+    @Reference var folder: RecordID<Folder>? = nil
 }
 
 private struct Child: Codable, Hashable {
-    @Reference(Folder.self, action: .deleteSelf) var folder: Folder.ID? = nil
+    @Reference(action: .deleteSelf) var folder: RecordID<Folder>? = nil
 
     /// The wrapper's storage is private, so only this file can read it.
     var folderAction: RecordRepresentation.Reference.Action { _folder.action }
@@ -20,7 +21,7 @@ private struct Child: Codable, Hashable {
 }
 
 @Suite struct ReferenceTests {
-    private let folderID = UUID(uuidString: "E621E1F8-C36C-495A-93FC-0C247A3E6E5F")!
+    private let folderID = RecordID<Folder>(name: UUID(uuidString: "E621E1F8-C36C-495A-93FC-0C247A3E6E5F")!, zone: "Z")
     private let noteID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     private func json(_ value: some Encodable) throws -> String {
@@ -35,7 +36,7 @@ private struct Child: Codable, Hashable {
     }
 
     @Test func encodesARecordReference() throws {
-        #expect(try json(Note(id: noteID, folder: folderID)) == #"{"folder":{"action":"none","recordName":"E621E1F8-C36C-495A-93FC-0C247A3E6E5F"},"id":"00000000-0000-0000-0000-000000000001"}"#)
+        #expect(try json(Note(id: noteID, folder: folderID)) == #"{"folder":{"action":"none","owner":"__defaultOwner__","recordName":"E621E1F8-C36C-495A-93FC-0C247A3E6E5F","zone":"Z"},"id":"00000000-0000-0000-0000-000000000001"}"#)
     }
 
     @Test func leavesOutNil() throws {
@@ -56,22 +57,39 @@ private struct Child: Codable, Hashable {
     }
 
     @Test func readsLowercaseRecordNames() throws {
-        let text = #"{"id":"00000000-0000-0000-0000-000000000001","folder":{"recordName":"e621e1f8-c36c-495a-93fc-0c247a3e6e5f","action":"none"}}"#
+        let text = #"{"id":"00000000-0000-0000-0000-000000000001","folder":{"recordName":"e621e1f8-c36c-495a-93fc-0c247a3e6e5f","zone":"Z","action":"none"}}"#
         #expect(try JSONDecoder().decode(Note.self, from: Data(text.utf8)).folder == folderID)
     }
 
     @Test func rejectsARecordNameThatIsNotAUUID() {
-        let text = #"{"id":"00000000-0000-0000-0000-000000000001","folder":{"recordName":"42","action":"none"}}"#
+        let text = #"{"id":"00000000-0000-0000-0000-000000000001","folder":{"recordName":"42","zone":"Z","action":"none"}}"#
         #expect(throws: DecodingError.self) { try JSONDecoder().decode(Note.self, from: Data(text.utf8)) }
     }
 
     @Test func keepsTheAction() throws {
         let child = Child(folder: folderID)
         #expect(child.folderAction == .deleteSelf)
-        #expect(try json(child) == #"{"folder":{"action":"deleteSelf","recordName":"E621E1F8-C36C-495A-93FC-0C247A3E6E5F"}}"#)
+        #expect(try json(child) == #"{"folder":{"action":"deleteSelf","owner":"__defaultOwner__","recordName":"E621E1F8-C36C-495A-93FC-0C247A3E6E5F","zone":"Z"}}"#)
         let decoded = try JSONDecoder().decode(Child.self, from: JSONEncoder().encode(child))
         #expect(decoded == child)
         #expect(decoded.folderAction == .deleteSelf)
+    }
+
+    @Test func pointsAtAnyTargetByItsRecordID() throws {
+        let id = try RecordID(Folder(slug: "inbox"), id: \.slug, zone: "Z")
+        #expect(id == RecordID(name: UUID(stableHashOf: #"Folder|"inbox""#), zone: "Z"))
+        #expect(Note(id: noteID, folder: id).folder?.name == id.name)
+    }
+
+    @Test func keepsTheZoneAndOwner() throws {
+        let shared = RecordID<Folder>(name: folderID.name, zone: "Shared", owner: "_8a2f")
+        let decoded = try JSONDecoder().decode(Note.self, from: JSONEncoder().encode(Note(id: noteID, folder: shared)))
+        #expect(decoded.folder == shared)
+    }
+
+    @Test func rejectsAReferenceWithNoZone() {
+        let text = #"{"id":"00000000-0000-0000-0000-000000000001","folder":{"recordName":"E621E1F8-C36C-495A-93FC-0C247A3E6E5F","action":"none"}}"#
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Note.self, from: Data(text.utf8)) }
     }
 
     @Test func aNilReferenceDecodesWithNone() throws {
@@ -87,14 +105,14 @@ private struct Child: Codable, Hashable {
 }
 
 private struct Page: Codable, Hashable {
-    @Reference(parent: Folder.self) var folder: Folder.ID? = nil
+    @Reference(isParent: true) var folder: RecordID<Folder>? = nil
 
     /// The wrapper's storage is private, so only this file can read it.
     var folderIsParent: Bool { _folder.isParent }
 }
 
 @Suite struct ParentReferenceTests {
-    private let folder = UUID(uuidString: "00000000-0000-0000-0000-00000000000F")!
+    private let folder = RecordID<Folder>(name: UUID(uuidString: "00000000-0000-0000-0000-00000000000F")!, zone: "Z")
 
     private func json(_ value: some Encodable) throws -> String {
         let encoder = JSONEncoder()
@@ -103,7 +121,7 @@ private struct Page: Codable, Hashable {
     }
 
     @Test func encodesAParentReferenceWithNoAction() throws {
-        #expect(try json(Page(folder: folder)) == #"{"folder":{"action":"none","isParent":true,"recordName":"00000000-0000-0000-0000-00000000000F"}}"#)
+        #expect(try json(Page(folder: folder)) == #"{"folder":{"action":"none","isParent":true,"owner":"__defaultOwner__","recordName":"00000000-0000-0000-0000-00000000000F","zone":"Z"}}"#)
     }
 
     @Test func leavesOutNilAndDecodesMissingAsNil() throws {
@@ -127,6 +145,6 @@ private struct Page: Codable, Hashable {
     }
 
     @Test func rejectsARecordNameThatIsNotAUUID() {
-        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Page.self, from: Data(#"{"folder":{"recordName":"42","action":"none","isParent":true}}"#.utf8)) }
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Page.self, from: Data(#"{"folder":{"recordName":"42","zone":"Z","action":"none","isParent":true}}"#.utf8)) }
     }
 }

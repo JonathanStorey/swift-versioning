@@ -320,33 +320,46 @@ try PropertyMerge<Note>(favoring: .theirs).merge(base: base, ours: ours, theirs:
 
 ## CloudKit records
 
-### References
+### Record IDs
 
-`@Reference` holds a read-only link to another `Identifiable` model as that
-model's `id`, ready for CloudKit's `CKRecord.Reference`. The generic target
-is inferred from the type you pass.
+`RecordID<Record>` is where a record lives: its name, its zone, and the
+zone's owner. It is everything needed to find the record again, so a
+reference stores it and a view can be handed one.
 
 ```swift
-struct Folder: Codable, Identifiable {
-    var id: UUID
-}
+let folder = try RecordID(folder, zone: "Notes")          // an Identifiable folder
+let page = try RecordID(page, id: \.slug, zone: "Pages")   // a plain struct
+```
 
+The name is the record's `UUID` id, or a stable hash of the type and any
+other id, the same name the record is saved under. The owner is
+`"__defaultOwner__"` in your own database, or the sharer's user record name
+for a zone shared with you.
+
+### References
+
+`@Reference` holds a read-only link to another record as its `RecordID`,
+ready for CloudKit's `CKRecord.Reference`. The target can be any type,
+identified however it is saved.
+
+```swift
 struct Note: Codable, Identifiable {
     var id: UUID
-    @Reference(Folder.self, action: .deleteSelf) var folder: Folder.ID? = nil
+    @Reference(action: .deleteSelf) var folder: RecordID<Folder>? = nil
 }
 
-let note = Note(id: UUID(), folder: folder.id)
-note.folder                      // Optional(folder.id)
+let note = Note(id: UUID(), folder: try RecordID(folder, zone: "Notes"))
+note.folder?.name                // the folder's record name
 ```
 
 The property is set when the model is created or decoded, and the wrapper
 stores only the id and its action. It encodes a
 `RecordRepresentation.Reference`, so `JSONEncoder` writes
-`{"folder":{"action":"deleteSelf","recordName":"..."},"id":"..."}`. A `nil`
-reference is left out, and a missing key decodes as `nil`. The target's `id`
-must be a `UUID`, and the record name is its `uuidString`, which is always a
-valid CloudKit record name and reads back exactly.
+`{"folder":{"action":"deleteSelf","owner":"__defaultOwner__","recordName":"...","zone":"Notes"},"id":"..."}`.
+A `nil` reference is left out, and a missing key decodes as `nil`. CloudKit
+keeps a reference in its record's zone, so a record encoder writes only the
+name, and a record decoder fills in the zone and owner from the record it
+reads.
 
 The action follows `CKRecord.Reference`. With `.deleteSelf`, the record
 holding the property deletes itself when the target is deleted. A decoded
@@ -356,24 +369,24 @@ the action `.none`.
 
 ### Reference lists
 
-`@References` holds a read-only to-many relationship as the targets' ids, in
-order. The initializer picks how the list is stored, and the property reads
+`@References` holds a read-only to-many relationship as the targets'
+`RecordID`s, in order. The initializer picks how the list is stored, and the property reads
 the same either way.
 
 ```swift
 struct Note: Codable, Identifiable {
     var id: UUID
-    @References(Attachment.self) var attachments: [UUID] = []
-    @References(to: \Tag.notes, action: .deleteSelf) var tags: [UUID] = []
+    @References var attachments: [RecordID<Attachment>] = []
+    @References(to: \Tag.notes, action: .deleteSelf) var tags: [RecordID<Tag>] = []
 }
 
 struct Tag: Codable, Identifiable {
     var id: UUID
-    @References(from: \Note.tags) var notes: [UUID] = []
+    @References(from: \Note.tags) var notes: [RecordID<Note>] = []
 }
 ```
 
-A target type alone stores the list as one reference list field, like
+Without a key path the list is one reference list field, like
 `CKRecord`'s own, so it travels with the record and two devices settle on
 one list. A key path to the target's inverse stores each reference as its
 own `Relationship` record instead, so the list has no size limit and edits
@@ -400,14 +413,14 @@ when the list should merge across devices or outgrow a field.
 
 ### Parents
 
-`@Reference(parent:)` points at the record that owns this one, and it is
+`@Reference(isParent: true)` points at the record that owns this one, and it is
 saved as the record's `parent`. CloudKit shares a record together with
 every record whose parent points at it, so sharing a folder shares its notes.
 
 ```swift
 struct Note: Codable, Identifiable {
     var id: UUID
-    @Reference(parent: Folder.self) var folder: Folder.ID? = nil
+    @Reference(isParent: true) var folder: RecordID<Folder>? = nil
 }
 ```
 
