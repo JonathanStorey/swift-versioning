@@ -62,7 +62,9 @@ extension RecordContainer.Row {
         }
         do {
             let merged = try merge(ours, theirs, base)
-            self.ours = merged == theirs ? nil : merged
+            // An explicit Optional, because JSONRepresentation is ExpressibleByNilLiteral and
+            // a bare `nil` in the conditional would store JSON `null` instead of nothing.
+            self.ours = merged == theirs ? Optional.none : merged
             base = theirs
             self.theirs = nil
             error = nil
