@@ -282,9 +282,4 @@ private extension RecordRepresentation.Reference {
         return reference
     }
 }
-
-/// An `@Encrypted` value, which a record stores in `encryptedValues`.
-private protocol EncryptedValue {}
-
-extension Encrypted: EncryptedValue {}
 #endif

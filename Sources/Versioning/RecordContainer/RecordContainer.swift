@@ -69,7 +69,7 @@ extension DatabaseError {
 
 extension RecordContainer {
     /// The result of `body`, with no other locked work on the container running at the same time.
-    func locked<T>(_ body: () throws -> T) rethrows -> T {
+    func locked<T, Failure: Error>(_ body: () throws(Failure) -> T) throws(Failure) -> T {
         lock.lock()
         defer { lock.unlock() }
         return try body()

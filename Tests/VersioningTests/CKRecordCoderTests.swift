@@ -256,14 +256,159 @@ private func json(_ value: some Encodable) -> Data {
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    @Test func throwsWithoutSaving() throws {
+    @Test func skipsARecordNotNamedByAUUID() throws {
         let container = RecordContainer()
         container.register(Note.self)
-        let unnamed = record(["title": "Hello" as NSString], type: "Note", name: "not-a-uuid")
-        #expect(throws: DecodingError.self) { try container.save(their: unnamed) }
-        #expect(throws: DecodingError.self) { try container.save(their: record(type: "Other")) }
-        #expect(throws: DecodingError.self) { try container.save(their: record(type: "Note")) }
+        try container.save(their: record(["title": "Hello" as NSString], type: "Note", name: "not-a-uuid"))
         #expect(try container.row(id: id) == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func keepsARecordItCannotReadWithTheReason() throws {
+        for (registered, type) in [(true, "Note"), (false, "Other")] {
+            let container = RecordContainer()
+            if registered { container.register(Note.self) }
+            try container.save(their: record(["title": "Hello" as NSString], type: type))
+
+            let row = try #require(try container.row(id: id))
+            let metadata = try #require(row.metadata)
+            // Archived the way system fields are, so it reads back through CKRecord(coder:).
+            let unarchiver = try NSKeyedUnarchiver(forReadingFrom: metadata)
+            unarchiver.requiresSecureCoding = true
+            let kept = try #require(CKRecord(coder: unarchiver))
+            #expect(kept["title"] as? String == "Hello")
+            #expect(row.type == type)
+            #expect(row.base == nil)
+            #expect(row.error?.contains("could not read") == true, "\(row)")
+        }
+    }
+}
+
+@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+private func noteRecord(_ title: String) -> CKRecord {
+    record(["id": id.uuidString as NSString, "title": title as NSString], type: "Note")
+}
+
+@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+private func noteContainer() -> RecordContainer {
+    let container = RecordContainer()
+    container.register(Note.self)
+    return container
+}
+
+@Suite struct RecordContainerUploadTests {
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func sendsNothingWithoutLocalChanges() throws {
+        let container = noteContainer()
+        #expect(try container.send(id: id) == nil)
+        try container.save(their: noteRecord("Hello"))
+        #expect(try container.send(id: id) == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func sendsANewRecordInItsZone() throws {
+        let container = noteContainer()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+
+        let sent = try #require(try container.send(id: id))
+        #expect(sent.recordID == CKRecord.ID(recordName: id.uuidString, zoneID: zoneID))
+        #expect(sent.recordType == "Note")
+        #expect(sent["title"] as? String == "Draft")
+        #expect(sent["id"] as? String == id.uuidString)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func sendsAnEditOnTheServersRecord() throws {
+        let container = noteContainer()
+        let server = noteRecord("Hello")
+        try container.save(their: server)
+        try container.save(our: Note(id: id, title: "Edited"), zone: "Notes")
+
+        let sent = try #require(try container.send(id: id))
+        #expect(sent.recordID == server.recordID)
+        #expect(sent["title"] as? String == "Edited")
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aSavedUploadIsSynced() throws {
+        let container = noteContainer()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        try container.save(sent: try #require(try container.send(id: id)))
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.status == .synced, "\(row)")
+        #expect(row.base == (try? JSONRepresentation(Note(id: id, title: "Draft"))))
+        #expect(row.metadata != nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func anEditDuringTheUploadStaysWaiting() throws {
+        let container = noteContainer()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        let sent = try #require(try container.send(id: id))
+        try container.save(our: Note(id: id, title: "Draft, longer"), zone: "Notes")
+        try container.save(sent: sent)
+
+        #expect(try container.row(id: id)?.status == .waitingToUpload)
+        #expect(try container.send(id: id)?["title"] as? String == "Draft, longer")
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aRejectedUploadKeepsItsErrorUntilSavedAgain() throws {
+        let container = noteContainer()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        let error = CKError(.quotaExceeded)
+        try container.save(failed: try #require(try container.send(id: id)), error: error)
+
+        #expect(try container.row(id: id)?.status == .rejected(error.localizedDescription))
+        #expect(try container.send(id: id) == nil)
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        #expect(try container.send(id: id) != nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aRecordThatCannotBeEncodedIsMarked() throws {
+        let container = RecordContainer()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        #expect(try container.send(id: id) == nil)
+        #expect(try container.row(id: id)?.error?.contains("could not send") == true)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aFailureWorthRetryingChangesNothing() throws {
+        let container = noteContainer()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        let before = try container.row(id: id)
+        try container.save(failed: try #require(try container.send(id: id)), error: CKError(.networkFailure))
+        #expect(try container.row(id: id) == before)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aRecordTheServerLostIsCreatedAgain() throws {
+        let container = noteContainer()
+        try container.save(their: noteRecord("Hello"))
+        try container.save(our: Note(id: id, title: "Edited"), zone: "Notes")
+        try container.save(failed: try #require(try container.send(id: id)), error: CKError(.unknownItem))
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.metadata == nil)
+        #expect(row.status == .waitingToUpload)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aNewerServerVersionMergesIn() throws {
+        let container = noteContainer()
+        try container.save(their: noteRecord("Hello"))
+        try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
+        let error = CKError(.serverRecordChanged, userInfo: [CKRecordChangedErrorServerRecordKey: noteRecord("Theirs")])
+        try container.save(failed: try #require(try container.send(id: id)), error: error)
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.theirs == (try? JSONRepresentation(Note(id: id, title: "Theirs"))))
+        guard case .conflict = row.status else {
+            Issue.record("Expected a conflict, got \(row.status)")
+            return
+        }
     }
 }
 #endif

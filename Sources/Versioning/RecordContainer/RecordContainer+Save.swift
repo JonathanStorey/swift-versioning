@@ -25,12 +25,15 @@ extension RecordContainer {
     ///
     /// The row's id comes from the value at `id`, by ``recordID(for:type:)``. A new id adds
     /// a row. An existing id replaces `ours`, clears `isDeleted` and `error`, and keeps
-    /// `base`, `theirs`, `metadata` and the zone, in one statement.
+    /// `base`, `theirs`, `metadata` and the zone, in one statement. Asserts that a record
+    /// saved to ``Zone/public`` has no `@Encrypted` values, which the public database rejects.
     ///
     /// ```swift
     /// try container.save(our: page, id: \.slug, zone: "Pages")
     /// ```
     func save<Record: Encodable, ID: Encodable>(our record: Record, id: KeyPath<Record, ID>, zone: Zone) throws {
+        assert(zone != .public || !Mirror(reflecting: record).children.contains { $0.value is any EncryptedValue },
+               "The public database cannot store @Encrypted values, so \(Record.self) cannot be saved to Zone.public.")
         let id = try Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self))
         let ours = try Self.text(JSONRepresentation(record))
         try locked {
@@ -50,21 +53,33 @@ extension RecordContainer {
     ///
     /// A new record, or one with no local changes, takes `json` as its `base`. With local
     /// changes waiting, `json` merges into `ours` first, by the registered type's own merge.
-    /// See ``Row/receive(_:merging:)``. Throws when `type` is not registered.
-    func save(their json: JSONRepresentation, id: UUID, zone: Zone, type: String, metadata: Data?) throws {
-        let registered = try registeredType(named: type)
-        try locked {
-            var row = try row(id: id) ?? Row(id: id, zone: zone, type: type)
+    /// See ``Row/receive(_:merging:)``. When `type` is not registered, a merge cannot run, so
+    /// `json` waits in `theirs` with the reason in `error`.
+    func save(their json: JSONRepresentation, id: UUID, zone: Zone, type: String, metadata: Data?) throws(DatabaseError) {
+        // Looked up before the row is locked, since the lookup takes the same lock.
+        let registered = Result { try registeredType(named: type) }
+        try update(id: id, inserting: Row(id: id, zone: zone, type: type)) { row in
             row.metadata = metadata
-            row.receive(json) { ours, theirs, base in try ours.merging(with: theirs, from: base, as: registered) }
+            row.receive(json) { ours, theirs, base in
+                try ours.merging(with: theirs, from: base, as: registered.get())
+            }
+        }
+    }
+
+    /// Changes the row for `id` by `change`, in one locked read and write. With no row for
+    /// `id`, changes `new` and adds it, or does nothing when `new` is `nil`.
+    func update(id: UUID, inserting new: Row? = nil, _ change: (inout Row) -> Void) throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in
+            guard var row = try row(id: id) ?? new else { return }
+            change(&row)
             try write(row)
         }
     }
 
     /// The row for `id`, or `nil` when the container has none.
-    func row(id: UUID) throws -> Row? {
+    func row(id: UUID) throws(DatabaseError) -> Row? {
         var row: Row?
-        try run("SELECT zone, owner, type, metadata, base, ours, theirs, is_deleted, error FROM record WHERE id = ?", id.uuidString) { statement in
+        try run("SELECT zone, owner, type, metadata, base, ours, theirs, is_deleted, error FROM record WHERE id = ?", id.uuidString) { (statement) throws(DatabaseError) in
             row = Row(
                 id: id,
                 zone: Zone(statement.text(at: 0) ?? "", owner: statement.text(at: 1) ?? ""),
@@ -83,21 +98,28 @@ extension RecordContainer {
 
 private extension RecordContainer {
     /// `json` as the text the table stores.
-    static func text(_ json: JSONRepresentation) throws -> String {
-        String(decoding: try JSONEncoder().encode(json), as: UTF8.self)
+    static func text(_ json: JSONRepresentation) throws(DatabaseError) -> String {
+        do {
+            return String(decoding: try JSONEncoder().encode(json), as: UTF8.self)
+        } catch {
+            throw DatabaseError(code: SQLITE_MISMATCH, description: "JSON could not be stored: \(error)")
+        }
     }
 
     /// Writes every column of `row`, replacing any row with the same id.
-    func write(_ row: Row) throws {
+    func write(_ row: Row) throws(DatabaseError) {
         try run("""
             INSERT OR REPLACE INTO record (id, zone, owner, type, metadata, base, ours, theirs, is_deleted, error)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, row.id.uuidString, row.zone.name, row.zone.owner, row.type, row.metadata,
-            try row.base.map(Self.text), try row.ours.map(Self.text), try row.theirs.map(Self.text), row.isDeleted, row.error)
+            try row.base.map { (json) throws(DatabaseError) in try Self.text(json) },
+            try row.ours.map { (json) throws(DatabaseError) in try Self.text(json) },
+            try row.theirs.map { (json) throws(DatabaseError) in try Self.text(json) },
+            row.isDeleted, row.error)
     }
 
     /// Prepares `sql`, binds `values` in order, and steps through it, passing each result row to `body`.
-    func run(_ sql: String, _ values: Any?..., each body: (OpaquePointer) throws -> Void = { _ in }) throws {
+    func run(_ sql: String, _ values: Any?..., each body: (OpaquePointer) throws(DatabaseError) -> Void = { _ in }) throws(DatabaseError) {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
             throw DatabaseError(code: sqlite3_errcode(connection), connection: connection)
@@ -135,7 +157,12 @@ private extension OpaquePointer {
         return Data(bytes: bytes, count: Int(sqlite3_column_bytes(self, column)))
     }
 
-    func json(at column: Int32) throws -> JSONRepresentation? {
-        try text(at: column).map { try JSONDecoder().decode(JSONRepresentation.self, from: Data($0.utf8)) }
+    func json(at column: Int32) throws(DatabaseError) -> JSONRepresentation? {
+        guard let text = text(at: column) else { return nil }
+        do {
+            return try JSONDecoder().decode(JSONRepresentation.self, from: Data(text.utf8))
+        } catch {
+            throw DatabaseError(code: SQLITE_CORRUPT, description: "Stored JSON could not be read: \(error)")
+        }
     }
 }
