@@ -31,8 +31,10 @@ struct CKRecordEncoder {
         guard encoder.isKeyed else {
             throw EncodingError.invalidValue(value, .init(codingPath: [], debugDescription: "\(T.self) does not encode a keyed container, so it is not a record."))
         }
-        for key in record.allKeys() where !encoder.written.contains(key) { record[key] = nil }
-        for key in record.encryptedValues.allKeys() where !encoder.written.contains(key) { record.encryptedValues[key] = nil }
+        // A record's keys include its encrypted keys, which only `encryptedValues` may clear.
+        let encrypted = Set(record.encryptedValues.allKeys())
+        for key in encrypted where !encoder.written.contains(key) { record.encryptedValues[key] = nil }
+        for key in record.allKeys() where !encrypted.contains(key) && !encoder.written.contains(key) { record[key] = nil }
         if !encoder.wroteParent, record.parent != nil { record.parent = nil }
     }
 }

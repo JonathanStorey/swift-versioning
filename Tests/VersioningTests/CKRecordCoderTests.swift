@@ -9,7 +9,7 @@ private struct Folder: Identifiable {
     var id: UUID
 }
 
-private enum Mood: String, Codable {
+private enum Mood: String, Codable, CaseIterable {
     case calm, busy
 }
 
