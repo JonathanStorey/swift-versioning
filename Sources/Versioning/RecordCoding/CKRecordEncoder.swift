@@ -10,8 +10,8 @@ import CoreLocation
 /// ```
 ///
 /// The record keeps its system fields, so encoding onto the server's last copy uploads
-/// as a change to it. The key `"id"` is the record's name and is not written. `@Encrypted`
-/// values go to `encryptedValues`. Fields the value does not write are removed, so a
+/// as a change to it. An `id` is written as an ordinary field. `@Encrypted` values go to
+/// `encryptedValues`. Fields the value does not write are removed, so a
 /// property set to `nil` is cleared. Each value is written as the CloudKit value that
 /// ``CKRecordDecoder`` reads it from:
 ///
@@ -72,7 +72,6 @@ private final class RecordEncoder: Encoder {
     /// Writes `value` to the field `key`, or removes the field when `value` has no value.
     func write<T: Encodable>(_ value: T, forKey key: some CodingKey) throws {
         let name = key.stringValue
-        guard name != "id" else { return }
         let boxed = try FieldEncoder.box(value, owner: self, codingPath: [key]) as? CKRecordValue
         written.insert(name)
         if value is any EncryptedValue {
@@ -91,8 +90,7 @@ private struct FieldContainer<Key: CodingKey>: KeyedEncodingContainerProtocol {
     var codingPath: [any CodingKey] { [] }
 
     mutating func encodeNil(forKey key: Key) throws {
-        guard let encoder, key.stringValue != "id" else { return }
-        encoder.written.remove(key.stringValue)
+        encoder?.written.remove(key.stringValue)
     }
 
     mutating func encode(_ value: Bool, forKey key: Key) throws { try encoder?.write(value, forKey: key) }

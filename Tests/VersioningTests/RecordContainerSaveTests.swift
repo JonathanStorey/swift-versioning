@@ -7,7 +7,38 @@ private struct Note: Codable, Identifiable {
     var title: String
 }
 
+private struct Page: Codable, Identifiable {
+    var id: String
+    var title = ""
+}
+
+private struct Chapter: Codable, Identifiable {
+    var id: String
+}
+
 @Suite struct RecordContainerSaveTests {
+    @Test func aUUIDIDIsTheRecordID() throws {
+        let note = Note(title: "Draft")
+        #expect(try RecordContainer.recordID(of: note) == note.id)
+    }
+
+    @Test func anyOtherIDHashesWithItsType() throws {
+        let id = try RecordContainer.recordID(of: Page(id: "intro"))
+        #expect(try RecordContainer.recordID(of: Page(id: "intro", title: "Changed")) == id)
+        #expect(try RecordContainer.recordID(of: Page(id: "outro")) != id)
+        #expect(try RecordContainer.recordID(of: Chapter(id: "intro")) != id)
+        #expect(id == UUID(stableHashOf: #"Page|"intro""#))
+    }
+
+    @Test func aRecordWithAnotherIDSavesUnderItsHash() throws {
+        let container = RecordContainer()
+        try container.save(our: Page(id: "intro", title: "First"), zone: "Notes")
+        try container.save(our: Page(id: "intro", title: "Second"), zone: "Notes")
+
+        let row = try #require(try container.row(id: RecordContainer.recordID(of: Page(id: "intro"))))
+        #expect(row.ours == ["id": "intro", "title": "Second"])
+    }
+
     @Test func aNewRecordIsWaitingToUpload() throws {
         let container = RecordContainer()
         let note = Note(title: "Draft")

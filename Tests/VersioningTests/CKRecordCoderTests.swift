@@ -68,6 +68,11 @@ private struct Note: Codable, Identifiable, Mergeable {
     var title: String
 }
 
+private struct Page: Codable, Identifiable, Mergeable {
+    var id: String
+    var title: String
+}
+
 private let id = UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!
 private let folderID = UUID(uuidString: "00000000-0000-0000-0000-0000000000F1")!
 
@@ -90,6 +95,7 @@ private func fullSample() throws -> CKRecord {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try Data([9]).write(to: file)
     let sample = record([
+        "id": id.uuidString as NSString,
         "title": "Hello" as NSString,
         "count": 3 as NSNumber,
         "isPinned": 1 as NSNumber,
@@ -181,7 +187,7 @@ private func json(_ value: some Encodable) -> Data {
         #expect(try JSONRepresentation(decoded) == JSONRepresentation(sample))
         #expect(encoded.encryptedValues.allKeys() == ["secret"])
         #expect(!encoded.allKeys().contains("stale"))
-        #expect(!encoded.allKeys().contains("id"))
+        #expect(encoded.object(forKey: "id") as? String == id.uuidString)
         #expect(!encoded.allKeys().contains("subtitle"))
         #expect(!encoded.allKeys().contains("updated"))
     }
@@ -203,7 +209,7 @@ private func json(_ value: some Encodable) -> Data {
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     @Test func setsAndClearsTheParent() throws {
-        let source = record(["folder": folderReference()])
+        let source = record(["id": id.uuidString as NSString, "folder": folderReference()])
         source.parent = folderReference()
         let parented = try CKRecordDecoder().decode(Parented.self, from: source)
 
@@ -220,10 +226,22 @@ private func json(_ value: some Encodable) -> Data {
 
 @Suite struct RecordContainerCloudKitTests {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func savesARecordNamedByAHashOfItsID() throws {
+        let page = Page(id: "intro", title: "Hello")
+        let name = try RecordContainer.recordID(of: page)
+        let container = RecordContainer()
+        container.register(Page.self)
+        try container.save(their: record(["id": "intro" as NSString, "title": "Hello" as NSString], type: "Page", name: name.uuidString))
+
+        let row = try #require(try container.row(id: name))
+        #expect(row.base == (try? JSONRepresentation(page)))
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     @Test func savesTheDecodedRecordAsBase() throws {
         let container = RecordContainer()
         container.register(Note.self)
-        try container.save(their: record(["title": "Hello" as NSString], type: "Note"))
+        try container.save(their: record(["id": id.uuidString as NSString, "title": "Hello" as NSString], type: "Note"))
 
         let row = try #require(try container.row(id: id))
         #expect(row.base == (try? JSONRepresentation(Note(id: id, title: "Hello"))))
