@@ -46,13 +46,13 @@ extension RecordContainer {
                "The public database cannot store @Encrypted values, so \(Record.self) cannot be saved to Zone.public.")
         let id = try Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self))
         let json = try JSONRepresentation(record)
-        let ours = try Self.text(portable(storingAssets(Self.assetFiles(of: record, in: json), in: json, id: id), id: id))
+        let ours = try Self.text(portable(storingAssets(of: record, in: json, id: id), id: id))
         try locked {
             try run("""
                 INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
                 """, id.uuidString, zone.name, zone.owner, Self.recordType(of: Record.self), ours)
-            sweepAssets(id: id, of: try row(id: id))
+            if let row = try row(id: id) { sweepAssets(of: row) }
         }
     }
 
@@ -265,7 +265,7 @@ private extension RecordContainer {
     /// Removes the row for `id`.
     func remove(id: UUID) throws(DatabaseError) {
         try run("DELETE FROM record WHERE id = ?", id.uuidString)
-        sweepAssets(id: id, of: nil)
+        sweepAssets(id: id)
     }
 
     /// Writes every column of `row`, replacing any row with the same id.
@@ -279,7 +279,7 @@ private extension RecordContainer {
             """, row.id.uuidString, row.zone.name, row.zone.owner, row.type, row.metadata,
             try text(row.base), try text(row.ours), try text(row.theirs), try text(row.sent),
             row.isDeleted, row.error)
-        sweepAssets(id: row.id, of: row)
+        sweepAssets(of: row)
     }
 
     /// Prepares `sql`, binds `values` in order, and steps through it, passing each result row to `body`.

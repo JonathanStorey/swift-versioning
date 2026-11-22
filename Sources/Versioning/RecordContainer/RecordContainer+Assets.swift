@@ -53,35 +53,15 @@ extension RecordContainer {
         if unused.count == files.count { try? FileManager.default.removeItem(at: folder) }
     }
 
-    /// Removes the files of the row `id` that `row` no longer uses, or, with no `row`, its
-    /// whole folder: now, or, inside a transaction, once it ends.
-    func sweepAssets(id: UUID, of row: Row?) {
-        if assetsToSweep != nil {
-            assetsToSweep?.insert(id)
-        } else if let row {
-            removeUnusedAssets(of: row)
-        } else {
-            removeAssets(id: id)
-        }
-    }
-
     /// Removes the row's folder and every asset file in it.
     func removeAssets(id: UUID) {
         try? FileManager.default.removeItem(at: assetFolder(id: id))
     }
 
-    /// The file of each `Asset` property of `record`, by the key `json`, its encoding, holds
-    /// it under, so a custom `CodingKeys` is followed. Only a top-level property, since a
-    /// nested value is stored as JSON, where a record cannot hold an asset.
-    static func assetFiles(of record: Any, in json: JSONRepresentation) -> [String: URL] {
-        let files = Mirror(reflecting: record).properties.compactMap { ($0.value as? any AnyAsset)?.projectedValue }
-        guard !files.isEmpty, case .object(let pairs) = json else { return [:] }
-        var found: [String: URL] = [:]
-        for pair in pairs {
-            guard case .string(let text) = pair.value, let file = files.first(where: { $0.absoluteString == text }) else { continue }
-            found[pair.key] = file
-        }
-        return found
+    /// `json`, the encoding of `record`, with the file of each `Asset` property of `record`
+    /// copied into the row's folder, as ``storingAssets(_:in:id:)`` does.
+    func storingAssets(of record: Any, in json: JSONRepresentation, id: UUID) -> JSONRepresentation {
+        storingAssets(json.assetFiles(of: record), in: json, id: id)
     }
 
     /// `json` with each top-level file in the row's folder named relative to the folder, as
@@ -116,6 +96,20 @@ extension Mirror {
 }
 
 private extension JSONRepresentation {
+    /// The file of each `Asset` property of `record`, by the key this value, its encoding,
+    /// holds it under, so a custom `CodingKeys` is followed. Only a top-level property, since
+    /// a nested value is stored as JSON, where a record cannot hold an asset.
+    func assetFiles(of record: Any) -> [String: URL] {
+        let files = Mirror(reflecting: record).properties.compactMap { ($0.value as? any AnyAsset)?.projectedValue }
+        guard !files.isEmpty, case .object(let pairs) = self else { return [:] }
+        var found: [String: URL] = [:]
+        for pair in pairs {
+            guard case .string(let text) = pair.value, let file = files.first(where: { $0.absoluteString == text }) else { continue }
+            found[pair.key] = file
+        }
+        return found
+    }
+
     /// This object with the value at each key of `values` replaced.
     func replacing(_ values: [String: JSONRepresentation]) -> JSONRepresentation {
         guard case .object(let pairs) = self else { return self }

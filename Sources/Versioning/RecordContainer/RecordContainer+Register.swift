@@ -63,7 +63,7 @@ extension RecordContainer {
     /// with any file the merge wrote, as a merged `@Asset`, copied into the row `id`'s folder.
     ///
     /// The merge settles itself, so the user never sees it:
-    /// - Values that still conflict after the type's merge are settled by ``mergeStrategy``.
+    /// - Values that still conflict after the type's merge are settled by ``favoring``.
     /// - A version that cannot be read as `type` counts as missing: an unreadable `base`
     ///   makes a two-way merge, an unreadable `theirs` keeps `ours`, and an unreadable `ours`
     ///   takes `theirs`. Fields the type does not have are dropped.
@@ -82,20 +82,20 @@ extension RecordContainer {
         case (_?, nil): return ours
         case (nil, nil): return theirs
         }
-        let json = try JSONRepresentation(merged)
-        return storingAssets(Self.assetFiles(of: merged, in: json), in: json, id: id)
+        return storingAssets(of: merged, in: try JSONRepresentation(merged), id: id)
     }
 }
 
 private extension RecordContainer {
     /// `ours` merged with `theirs` by the type's own merge, and, where that conflicts, again
-    /// with ``mergeStrategy`` keeping its side at each conflicting value.
+    /// with ``DefaultMergeStrategy`` keeping the ``favoring`` side at each conflicting value,
+    /// which still merges each `Mergeable` property by its own merge.
     func settled<Record: Codable & Mergeable>(_ ours: Record, with theirs: Record, from base: Record?) throws(MergeConflict) -> Record {
         do {
             if let base { return try ours.merging(with: theirs, from: base) }
             return try ours.merging(with: theirs)
         } catch {
-            let strategy = DefaultMergeStrategy<Record>(favoring: (mergeStrategy.favoring ?? .ours).retyped())
+            let strategy = DefaultMergeStrategy<Record>(favoring: favoring.retyped())
             if let base { return try ours.merging(with: theirs, from: base, using: strategy) }
             return try ours.merging(with: theirs, using: strategy)
         }

@@ -23,33 +23,30 @@ public final class RecordContainer: @unchecked Sendable {
     let assets: URL
     /// The registered record types, by record type name. Read and written while locked.
     var registrations: [String: RecordType] = [String(describing: Relationship.self): Relationship.self]
-    /// The strategy for the values that still conflict after a record type's own merge,
-    /// stored under the lock. See ``mergeStrategy``.
-    private var storedMergeStrategy: DefaultMergeStrategy<JSONRepresentation> = .favoring(.ours)
+    /// The side kept at the values that still conflict after a record type's own merge,
+    /// stored under the lock. See ``favoring``.
+    private var storedFavoring: KeepMerge<JSONRepresentation> = .ours
 
-    /// How the values that still conflict after a record type's own merge are settled, so a
-    /// merge never stops syncing.
+    /// The side kept at each value that still conflicts after a record type's own merge, so
+    /// a merge never stops syncing.
     ///
-    /// The default, `.favoring(.ours)`, keeps this device's value at each conflicting
-    /// field and merges everything else, the field-by-field "local edit wins" of Apple's
-    /// CloudKit samples. `.favoring(.theirs)` keeps the server's. A strategy must favor a
-    /// side, since a conflict left standing would stop the row from syncing: it asserts,
-    /// and favors ours.
+    /// The type's own merge runs first, so each `Mergeable` property still merges by its own
+    /// rules, and only what that cannot settle takes a side. The default, `.ours`, keeps this
+    /// device's value at each conflicting field and merges everything else, the
+    /// field-by-field "local edit wins" of Apple's CloudKit samples. `.theirs` keeps the server's.
     ///
     /// ```swift
-    /// container.mergeStrategy = .favoring(.theirs)
+    /// container.favoring = .theirs
     /// ```
-    var mergeStrategy: DefaultMergeStrategy<JSONRepresentation> {
-        get { locked { storedMergeStrategy } }
-        set {
-            assert(newValue.favoring != nil, "A merge strategy must favor a side, so every merge settles.")
-            locked { storedMergeStrategy = newValue.favoring == nil ? .favoring(.ours) : newValue }
-        }
+    var favoring: KeepMerge<JSONRepresentation> {
+        get { locked { storedFavoring } }
+        set { locked { storedFavoring = newValue } }
     }
 
     /// The rows whose unused asset files wait for the transaction around them to end, or
-    /// `nil` outside a transaction. Read and written while locked.
-    var assetsToSweep: Set<UUID>?
+    /// `nil` outside a transaction. Read and written while locked, only by `transaction(_:)`
+    /// and `sweepAssets`.
+    private var assetsToSweep: Set<UUID>?
 
     /// An empty container held in memory.
     public convenience init() {
@@ -122,7 +119,12 @@ extension RecordContainer {
             defer {
                 let ids = assetsToSweep ?? []
                 assetsToSweep = nil
-                for id in ids { sweepAssets(id: id, of: try? row(id: id)) }
+                for id in ids {
+                    // A row that cannot be read keeps its files.
+                    do {
+                        if let row = try row(id: id) { sweepAssets(of: row) } else { sweepAssets(id: id) }
+                    } catch {}
+                }
             }
             try execute("BEGIN IMMEDIATE")
             do throws(DatabaseError) {
@@ -133,6 +135,26 @@ extension RecordContainer {
                 try? execute("ROLLBACK")
                 throw error
             }
+        }
+    }
+
+    /// Removes each file in the folder of `row` that it no longer uses: now, or, inside a
+    /// transaction, once it ends, so a rolled-back write still finds its files.
+    func sweepAssets(of row: Row) {
+        if assetsToSweep != nil {
+            assetsToSweep?.insert(row.id)
+        } else {
+            removeUnusedAssets(of: row)
+        }
+    }
+
+    /// Removes the folder of the removed row `id`: now, or, inside a transaction, once it
+    /// ends, so a rolled-back removal still finds its files.
+    func sweepAssets(id: UUID) {
+        if assetsToSweep != nil {
+            assetsToSweep?.insert(id)
+        } else {
+            removeAssets(id: id)
         }
     }
 
