@@ -540,4 +540,53 @@ private struct Attachment: Codable, Mergeable {
         #expect(asset.fileURL?.absoluteString.hasPrefix(container.assetFolder(id: id).absoluteString) == true)
     }
 }
+private struct Memo: Codable, Identifiable, Mergeable {
+    var id: UUID
+    var title: String
+    var subtitle: String?
+    @Encrypted var pin: Int? = nil
+}
+
+@Suite struct RecordContainerChangedFieldTests {
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    private func synced() throws -> RecordContainer {
+        let container = RecordContainer()
+        container.register(Memo.self)
+        let server = record(["id": id.uuidString as NSString, "title": "Hello" as NSString, "subtitle": "Draft" as NSString], type: "Memo")
+        server.encryptedValues["pin"] = 4 as NSNumber
+        try container.save(their: server)
+        return container
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func sendsOnlyTheChangedFields() throws {
+        let container = try synced()
+        try container.save(our: Memo(id: id, title: "Edited", subtitle: "Draft", pin: 4), zone: "Notes")
+
+        let sent = try #require(try container.send(id: id))
+        #expect(sent.changedKeys() == ["title"])
+        #expect(sent["title"] as? String == "Edited")
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func clearsAnOptionalSetToNil() throws {
+        let container = try synced()
+        try container.save(our: Memo(id: id, title: "Hello", subtitle: nil, pin: nil), zone: "Notes")
+
+        let sent = try #require(try container.send(id: id))
+        #expect(Set(sent.changedKeys()) == ["subtitle", "pin"])
+        #expect(sent["subtitle"] == nil)
+        #expect(sent.encryptedValues["pin"] == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aNewRecordSendsEveryField() throws {
+        let container = RecordContainer()
+        container.register(Memo.self)
+        try container.save(our: Memo(id: id, title: "New", subtitle: "Sub"), zone: "Notes")
+
+        let sent = try #require(try container.send(id: id))
+        #expect(Set(sent.changedKeys()) == ["id", "title", "subtitle"])
+    }
+}
 #endif
