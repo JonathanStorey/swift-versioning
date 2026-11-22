@@ -23,10 +23,11 @@ extension RecordContainer {
 
     /// Saves `record` as this device's version: `ours`, waiting to upload.
     ///
-    /// The row's id is ``recordID(of:)``. A new id adds a row. An existing id replaces `ours`, clears `isDeleted` and `error`,
-    /// and keeps `base`, `theirs`, `metadata`, the zone and the owner, in one statement.
-    func save<Record: Encodable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID: Encodable {
-        let id = try Self.recordID(of: record)
+    /// The row's id is ``recordID(of:)``, so `Record` must be registered. A new id adds a
+    /// row. An existing id replaces `ours`, clears `isDeleted` and `error`, and keeps `base`,
+    /// `theirs`, `metadata`, the zone and the owner, in one statement.
+    func save<Record: Encodable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws {
+        let id = try recordID(of: record)
         let ours = try Self.text(JSONRepresentation(record))
         try locked {
             try run("""

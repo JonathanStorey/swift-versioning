@@ -5,7 +5,7 @@ extension RecordContainer {
     /// Saves the server's version of `record`, decoded as its registered type, with its
     /// system fields as `metadata`.
     ///
-    /// The record's name, a UUID from ``recordID(of:)``, is the row's id, and its zone and
+    /// The record's name, a UUID from ``recordID(for:type:)``, is the row's id, and its zone and
     /// owner come from the record's zone. The decoded value merges into the row as ``save(their:id:zone:owner:type:metadata:)``
     /// describes. Throws, saving nothing, when the record's name is not a UUID, its type is
     /// not registered, or the type cannot decode it.

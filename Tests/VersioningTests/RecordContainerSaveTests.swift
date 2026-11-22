@@ -2,45 +2,61 @@ import Foundation
 import Testing
 @testable import Versioning
 
-private struct Note: Codable, Identifiable {
+private struct Note: Codable, Identifiable, Mergeable {
     var id = UUID()
     var title: String
 }
 
-private struct Page: Codable, Identifiable {
-    var id: String
+/// A plain struct, identified by `slug`.
+private struct Page: Codable, Mergeable {
+    var slug: String
     var title = ""
 }
 
-private struct Chapter: Codable, Identifiable {
-    var id: String
+private struct Chapter: Codable, Mergeable {
+    var slug: String
+}
+
+private extension RecordContainer {
+    static func registered() -> RecordContainer {
+        let container = RecordContainer()
+        container.register(Note.self)
+        container.register(Page.self, id: \.slug)
+        container.register(Chapter.self, id: \.slug)
+        return container
+    }
 }
 
 @Suite struct RecordContainerSaveTests {
     @Test func aUUIDIDIsTheRecordID() throws {
         let note = Note(title: "Draft")
-        #expect(try RecordContainer.recordID(of: note) == note.id)
+        #expect(try RecordContainer.registered().recordID(of: note) == note.id)
     }
 
     @Test func anyOtherIDHashesWithItsType() throws {
-        let id = try RecordContainer.recordID(of: Page(id: "intro"))
-        #expect(try RecordContainer.recordID(of: Page(id: "intro", title: "Changed")) == id)
-        #expect(try RecordContainer.recordID(of: Page(id: "outro")) != id)
-        #expect(try RecordContainer.recordID(of: Chapter(id: "intro")) != id)
+        let container = RecordContainer.registered()
+        let id = try container.recordID(of: Page(slug: "intro"))
+        #expect(try container.recordID(of: Page(slug: "intro", title: "Changed")) == id)
+        #expect(try container.recordID(of: Page(slug: "outro")) != id)
+        #expect(try container.recordID(of: Chapter(slug: "intro")) != id)
         #expect(id == UUID(stableHashOf: #"Page|"intro""#))
     }
 
-    @Test func aRecordWithAnotherIDSavesUnderItsHash() throws {
-        let container = RecordContainer()
-        try container.save(our: Page(id: "intro", title: "First"), zone: "Notes")
-        try container.save(our: Page(id: "intro", title: "Second"), zone: "Notes")
+    @Test func aPlainStructSavesUnderTheHashOfItsRegisteredID() throws {
+        let container = RecordContainer.registered()
+        try container.save(our: Page(slug: "intro", title: "First"), zone: "Notes")
+        try container.save(our: Page(slug: "intro", title: "Second"), zone: "Notes")
 
-        let row = try #require(try container.row(id: RecordContainer.recordID(of: Page(id: "intro"))))
-        #expect(row.ours == ["id": "intro", "title": "Second"])
+        let row = try #require(try container.row(id: container.recordID(of: Page(slug: "intro"))))
+        #expect(row.ours == ["slug": "intro", "title": "Second"])
+    }
+
+    @Test func anUnregisteredTypeCannotSave() {
+        #expect(throws: DecodingError.self) { try RecordContainer().save(our: Note(title: "Draft"), zone: "Notes") }
     }
 
     @Test func aNewRecordIsWaitingToUpload() throws {
-        let container = RecordContainer()
+        let container = RecordContainer.registered()
         let note = Note(title: "Draft")
         try container.save(our: note, zone: "Notes")
 
@@ -50,7 +66,7 @@ private struct Chapter: Codable, Identifiable {
     }
 
     @Test func savingAgainReplacesOursAndKeepsTheRest() throws {
-        let container = RecordContainer()
+        let container = RecordContainer.registered()
         var note = Note(title: "First")
         try container.save(our: note, zone: "Notes")
         try container.execute("UPDATE record SET base = '{\"title\":\"Base\"}', is_deleted = 1, error = 'Record too large'")
@@ -75,7 +91,9 @@ private struct Chapter: Codable, Identifiable {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite")
         defer { try? FileManager.default.removeItem(at: url) }
         let note = Note(title: "Kept")
-        try RecordContainer(url: url).save(our: note, zone: "Notes")
+        let container = try RecordContainer(url: url)
+        container.register(Note.self)
+        try container.save(our: note, zone: "Notes")
         #expect(try RecordContainer(url: url).row(id: note.id)?.ours?["title"] == "Kept")
     }
 }
