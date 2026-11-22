@@ -13,7 +13,7 @@ import CoreLocation
 /// as a change to it. The key `"id"` is the record's name and is not written. `@Encrypted`
 /// values go to `encryptedValues`. Fields the value does not write are removed, so a
 /// property set to `nil` is cleared. Each value is written as the CloudKit value that
-/// ``RecordSchema`` names for it:
+/// ``CKRecordDecoder`` reads it from:
 ///
 /// - `String`, numbers, `Bool` (as 0 or 1), `Date` and `Data` as themselves, and `URL` as
 ///   its absolute string.
@@ -75,7 +75,7 @@ private final class RecordEncoder: Encoder {
         guard name != "id" else { return }
         let boxed = try FieldEncoder.box(value, owner: self, codingPath: [key]) as? CKRecordValue
         written.insert(name)
-        if RecordHint(for: T.self) == .encrypted {
+        if value is any EncryptedValue {
             record.encryptedValues[name] = boxed
         } else {
             record[name] = boxed
@@ -284,4 +284,9 @@ private extension RecordRepresentation.Reference {
         return reference
     }
 }
+
+/// An `@Encrypted` value, which a record stores in `encryptedValues`.
+private protocol EncryptedValue {}
+
+extension Encrypted: EncryptedValue {}
 #endif

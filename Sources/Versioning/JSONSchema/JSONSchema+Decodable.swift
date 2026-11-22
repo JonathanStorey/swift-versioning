@@ -36,14 +36,12 @@ extension JSONSchema {
         self = try recorder.schema()
     }
 
-    /// Records `type` as `init(for:)` does, and also returns the placeholder
-    /// value it decoded, the record hints seen at each coding path, and the
-    /// placeholder record names handed out, by coding path.
-    package static func record<T: Decodable>(_ type: T.Type) throws -> (value: T, schema: JSONSchema, hints: [[String]: Set<RecordHint>], markers: [UUID: [String]]) {
+    /// Records `type` as `init(for:)` does, and returns the placeholder value
+    /// it decoded and the placeholder record names handed out, by coding path.
+    package static func record<T: Decodable>(_ type: T.Type) throws -> (value: T, markers: [UUID: [String]]) {
         let context = SchemaRecorder.Context()
-        let recorder = SchemaRecorder(codingPath: [], context: context)
-        let value = try recorder.decode(type)
-        return (value, try recorder.schema(), context.hints, context.markers)
+        let value = try SchemaRecorder(codingPath: [], context: context).decode(type)
+        return (value, context.markers)
     }
 }
 
@@ -56,9 +54,6 @@ private final class SchemaRecorder: Decoder {
     final class Context {
         /// Types being recorded on the current path, to detect recursion.
         var visiting: Set<ObjectIdentifier> = []
-        /// What each coding path holds for a CloudKit record, such as a
-        /// `Date` or an `Encrypted` value, for ``RecordSchema``.
-        var hints: [[String]: Set<RecordHint>] = [:]
         /// The record name each placeholder reference was given, so a key
         /// path read from the placeholder value finds its coding path.
         var markers: [UUID: [String]] = [:]
@@ -106,9 +101,6 @@ private final class SchemaRecorder: Decoder {
 extension SchemaRecorder {
     func decode<T: Decodable>(_ type: T.Type) throws -> T {
         let path = codingPath.map(\.stringValue)
-        if let hint = RecordHint(for: type) {
-            context.hints[path, default: []].insert(hint)
-        }
         if let value = try foundationPlaceholder(type) { return value }
         if let dictionary = type as? any StringKeyedDictionary.Type {
             _ = try values().decode(dictionary.valueType)

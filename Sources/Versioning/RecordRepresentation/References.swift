@@ -27,9 +27,9 @@ import Foundation
 /// devices merge. The key path is a signal, not a name: the link is named
 /// by the declaring side, as in `"Note.tags"`, from the coding key it
 /// encodes. The inverse points back at the declaring property and reads the
-/// same links from the other end. Its link name comes from
-/// ``RecordSchema``, which finds the coding key behind the key path, so it
-/// follows `CodingKeys` and works on every platform.
+/// same links from the other end. Its link name comes from the coding key
+/// behind the key path, so it follows `CodingKeys` and works on every
+/// platform.
 ///
 /// The property is set when the model is created or decoded and cannot be
 /// assigned afterwards. Either way it encodes each id as a
@@ -95,7 +95,24 @@ public struct References<Target: Identifiable>: Sendable where Target.ID == UUID
     /// The inverse of the list at `declaringProperty`, reading the same
     /// ``Relationship`` records from the other side.
     public init(wrappedValue: [UUID] = [], from declaringProperty: KeyPath<Target, [UUID]> & Sendable, action: RecordRepresentation.Reference.Action = .none) where Target: Decodable {
-        self.init(wrappedValue: wrappedValue, action: action, storage: .inverse, inverseName: { try RecordSchema.name(of: declaringProperty) })
+        self.init(wrappedValue: wrappedValue, action: action, storage: .inverse, inverseName: { try Self.linkName(of: declaringProperty) })
+    }
+}
+
+private extension References {
+    /// The link name of a reference list, `"Root.key"`, from a key path to
+    /// it, such as `"Note.tags"` for `\Note.tags`.
+    ///
+    /// The key is the coding key `Root` decodes the property from, found by
+    /// reading the key path on a placeholder `Root` whose references each
+    /// have a unique record name. It needs no runtime names, so it works in
+    /// stripped builds and on Linux.
+    static func linkName<Root: Decodable>(of keyPath: KeyPath<Root, [UUID]>) throws -> String {
+        let recorded = try JSONSchema.record(Root.self)
+        guard let marker = recorded.value[keyPath: keyPath].first, let key = recorded.markers[marker]?.first else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "The key path does not lead to a reference list that \(Root.self) decodes."))
+        }
+        return "\(Root.self).\(key)"
     }
 }
 
