@@ -8,8 +8,10 @@ extension RecordContainer {
     ///
     /// The record's name, a UUID from ``recordID(for:type:)``, is the row's id, and its zone and
     /// owner come from the record's zone. The decoded value merges into the row as ``save(their:id:zone:type:metadata:)``
-    /// describes. A record whose type is not registered, or that the type cannot decode, is
-    /// kept whole in `metadata` with the reason in `error`, so nothing is lost. A record whose
+    /// describes. A record whose type is not registered, or that the type cannot decode, was
+    /// written by a version of the app this device does not know, and its values are dropped:
+    /// an existing row keeps its content and takes only the record's system fields, so its next
+    /// upload is sent against the server's newest version, and a new record is skipped. A record whose
     /// name is not a UUID was not saved by this package and is skipped, as is a `CKShare`.
     /// Each asset's file is copied into the container, since the sync engine removes it.
     /// Throws only when the database fails.
@@ -19,7 +21,7 @@ extension RecordContainer {
         do {
             json = try self.json(of: record)
         } catch {
-            return try save(unreadable: record, id: id, reason: error)
+            return try update(id: id) { $0.metadata = record.systemFields }
         }
         // The sync engine removes an asset's file after the event, so the row keeps a copy.
         let stored = storingAssets(record.assetFiles, in: json, id: id)
@@ -111,7 +113,11 @@ extension RecordContainer {
         do {
             json = try self.json(of: record)
         } catch {
-            return try save(unreadable: record, id: id, reason: error)
+            // Only a record whose type this device no longer registers, so the upload stops here.
+            return try update(id: id) { row in
+                row.metadata = record.systemFields
+                row.error = "This device could not read the \(record.recordType) it sent: \(error)"
+            }
         }
         // Its assets are the container's own files, which `send` uploaded, so nothing is copied.
         try update(id: id) { row in
@@ -220,16 +226,6 @@ private extension RecordContainer {
     func json(of record: CKRecord) throws -> JSONRepresentation {
         try CKRecordDecoder().json(registeredType(named: record.recordType), from: record)
     }
-
-    /// Keeps `record`, which this device cannot read, whole in the row's `metadata`, with
-    /// `reason` in `error`, so a later version of the app can read it. `ours` and `base` are
-    /// unchanged, and nothing uploads until it is settled.
-    func save(unreadable record: CKRecord, id: UUID, reason: any Error) throws(DatabaseError) {
-        try update(id: id, inserting: Row(id: id, zone: record.recordID.zone, type: record.recordType)) { row in
-            row.metadata = record.archived
-            row.error = "This device could not read the server's \(record.recordType): \(reason)"
-        }
-    }
 }
 
 @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -327,14 +323,6 @@ private extension CKRecord {
             if let file = (object(forKey: key) as? CKAsset)?.fileURL { files[key] = file }
         }
         return files
-    }
-
-    /// The whole record archived, its values with its system fields.
-    var archived: Data {
-        let archiver = NSKeyedArchiver(requiringSecureCoding: true)
-        encode(with: archiver)
-        archiver.finishEncoding()
-        return archiver.encodedData
     }
 
     /// The record's system fields, archived, without its values.
