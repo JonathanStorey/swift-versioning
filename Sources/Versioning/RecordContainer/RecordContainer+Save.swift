@@ -66,6 +66,21 @@ extension RecordContainer {
         }
     }
 
+    /// Deletes `record` on this device, identified by the value at `id`, as ``delete(id:)``
+    /// describes.
+    ///
+    /// ```swift
+    /// try container.delete(our: page, id: \.slug)
+    /// ```
+    func delete<Record: Encodable, ID: Encodable>(our record: Record, id: KeyPath<Record, ID>) throws {
+        try delete(id: Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self)))
+    }
+
+    /// Deletes an `Identifiable` `record` on this device, identified by its `id`.
+    func delete<Record: Encodable & Identifiable>(our record: Record) throws where Record.ID: Encodable {
+        try delete(our: record, id: \.id)
+    }
+
     /// Deletes the record `id` on this device.
     ///
     /// A record the server has never confirmed is removed at once, since there is nothing

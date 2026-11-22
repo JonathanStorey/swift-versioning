@@ -72,4 +72,20 @@ private extension RecordContainer {
         #expect(row == RecordContainer.Row(id: note.id, zone: "Notes", type: "Note", ours: ours))
         #expect(row.status == .waitingToUpload)
     }
+
+    @Test func deletingOurRecordFindsItsRowByItsID() throws {
+        let note = Note(title: "Kept")
+        let container = try RecordContainer.synced(note)
+        try container.delete(our: note)
+        #expect(try container.row(id: note.id)?.isDeleted == true)
+
+        try container.save(our: Page(slug: "intro"), id: \.slug, zone: "Notes")
+        try container.delete(our: Page(slug: "intro", title: "Changed"), id: \.slug)
+        #expect(try container.row(id: RecordContainer.recordID(for: "intro", type: "Page")) == nil)
+    }
+}
+
+private struct Page: Codable {
+    var slug: String
+    var title = ""
 }
