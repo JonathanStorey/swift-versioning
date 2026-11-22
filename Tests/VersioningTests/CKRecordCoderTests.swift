@@ -9,7 +9,7 @@ private struct Folder: Identifiable {
     var id: UUID
 }
 
-private enum Mood: String, Codable {
+private enum Mood: String, Codable, CaseIterable {
     case calm, busy
 }
 
@@ -48,6 +48,21 @@ private struct Count: Decodable {
     var count: Int
 }
 
+private struct Shapes: Codable, Equatable {
+    var id: UUID
+    var sizes: [Size]
+    var counts: [String: Int]
+    var maybe: [String?]
+    var grid: [[Int]]
+    @Encrypted var pin: Int? = nil
+    var none: String?
+}
+
+private struct Parented: Codable {
+    var id: UUID
+    @Reference(parent: Folder.self) var folder: UUID? = nil
+}
+
 private struct Note: Codable, Identifiable, Mergeable {
     var id: UUID
     var title: String
@@ -70,40 +85,44 @@ private func folderReference(_ action: CKRecord.ReferenceAction = .none) -> CKRe
     CKRecord.Reference(recordID: CKRecord.ID(recordName: folderID.uuidString, zoneID: zoneID), action: action)
 }
 
+@available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+private func fullSample() throws -> CKRecord {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try Data([9]).write(to: file)
+    let sample = record([
+        "title": "Hello" as NSString,
+        "count": 3 as NSNumber,
+        "isPinned": 1 as NSNumber,
+        "score": 2.5 as NSNumber,
+        "created": Date(timeIntervalSinceReferenceDate: 100) as NSDate,
+        "bytes": Data([1, 2]) as NSData,
+        "link": "https://example.com/a" as NSString,
+        "mood": "busy" as NSString,
+        "words": ["a", "b"] as NSArray,
+        "tags": ["x"] as NSArray,
+        "size": Data(#"{"width":1,"height":2}"#.utf8) as NSData,
+        "home": CLLocation(latitude: 41.88, longitude: -87.63),
+        "file": CKAsset(fileURL: file),
+        "folder": folderReference(.deleteSelf),
+        "related": [folderReference()] as NSArray,
+    ])
+    sample.encryptedValues["secret"] = "pin" as NSString
+    return sample
+}
+
 @Suite struct CKRecordDecoderTests {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     @Test func decodesEachFieldType() throws {
-        let created = Date(timeIntervalSinceReferenceDate: 100)
-        let home = CLLocation(latitude: 41.88, longitude: -87.63)
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try Data([9]).write(to: file)
-        let sample = record([
-            "title": "Hello" as NSString,
-            "count": 3 as NSNumber,
-            "isPinned": 1 as NSNumber,
-            "score": 2.5 as NSNumber,
-            "created": created as NSDate,
-            "bytes": Data([1, 2]) as NSData,
-            "link": "https://example.com/a" as NSString,
-            "mood": "busy" as NSString,
-            "words": ["a", "b"] as NSArray,
-            "tags": ["x"] as NSArray,
-            "size": Data(#"{"width":1,"height":2}"#.utf8) as NSData,
-            "home": home,
-            "file": CKAsset(fileURL: file),
-            "folder": folderReference(.deleteSelf),
-            "related": [folderReference()] as NSArray,
-        ])
-        sample.encryptedValues["secret"] = "pin" as NSString
-
+        let sample = try fullSample()
         let decoded = try CKRecordDecoder().decode(Sample.self, from: sample)
+        let home = try #require(sample.object(forKey: "home") as? CLLocation)
 
         #expect(decoded.id == id)
         #expect(decoded.title == "Hello")
         #expect(decoded.count == 3)
         #expect(decoded.isPinned)
         #expect(decoded.score == 2.5)
-        #expect(decoded.created == created)
+        #expect(decoded.created == Date(timeIntervalSinceReferenceDate: 100))
         #expect(decoded.bytes == Data([1, 2]))
         #expect(decoded.link == URL(string: "https://example.com/a"))
         #expect(decoded.mood == .busy)
@@ -113,7 +132,7 @@ private func folderReference(_ action: CKRecord.ReferenceAction = .none) -> CKRe
         #expect(decoded.subtitle == nil)
         #expect(decoded.secret == "pin")
         #expect(decoded.home == Location(home))
-        #expect(decoded.$file == file)
+        #expect(decoded.$file == (sample.object(forKey: "file") as? CKAsset)?.fileURL)
         #expect(decoded.file == Data([9]))
         #expect(decoded.folder == folderID)
         #expect(decoded.related == [folderID])
@@ -141,6 +160,79 @@ private func folderReference(_ action: CKRecord.ReferenceAction = .none) -> CKRe
         for value in ["three" as NSString, 1.5 as NSNumber] as [CKRecordValue] {
             #expect(throws: DecodingError.self) { try CKRecordDecoder().decode(Count.self, from: record(["count": value])) }
         }
+    }
+}
+
+/// The record schema without `"id"`, which the coders map to the record's name.
+private func schema<T: Decodable>(_ type: T.Type) throws -> RecordSchema {
+    var schema = try RecordSchema(for: type)
+    schema.fields["id"] = nil
+    return schema
+}
+
+/// The JSON bytes the encoder stores for a nested value. Encoding these cannot fail.
+private func json(_ value: some Encodable) -> Data {
+    Data(try! JSONRepresentation(value).description.utf8)
+}
+
+@Suite struct CKRecordEncoderTests {
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func roundTripsEachFieldTypeAndClearsTheRest() throws {
+        let sample = try CKRecordDecoder().decode(Sample.self, from: fullSample())
+        let encoded = record(["stale": "x" as NSString])
+        encoded.encryptedValues["oldSecret"] = "y" as NSString
+
+        try CKRecordEncoder().encode(sample, to: encoded)
+        let decoded = try CKRecordDecoder().decode(Sample.self, from: encoded)
+
+        #expect(try JSONRepresentation(decoded) == JSONRepresentation(sample))
+        #expect(encoded.encryptedValues.allKeys() == ["secret"])
+        #expect(!encoded.allKeys().contains("stale"))
+        #expect(!encoded.allKeys().contains("id"))
+        #expect(!encoded.allKeys().contains("subtitle"))
+        #expect(!encoded.allKeys().contains("updated"))
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func writesTheFieldTypesRecordSchemaNames() throws {
+        let encoded = record()
+        try CKRecordEncoder().encode(CKRecordDecoder().decode(Sample.self, from: fullSample()), to: encoded)
+        #expect(try schema(Sample.self).contains(encoded))
+
+        let shapes = record(type: "Shapes")
+        try CKRecordEncoder().encode(Shapes(id: id, sizes: [Size(width: 1, height: 2)], counts: ["a": 1], maybe: ["b", nil], grid: [[1], [2, 3]], pin: 4), to: shapes)
+        #expect(try schema(Shapes.self).contains(shapes))
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func storesNestedValuesAsJSON() throws {
+        let shapes = Shapes(id: id, sizes: [Size(width: 1, height: 2)], counts: ["a": 1], maybe: ["b", nil], grid: [[1], [2, 3]], pin: 4)
+        let encoded = record(type: "Shapes")
+        try CKRecordEncoder().encode(shapes, to: encoded)
+
+        #expect(encoded.object(forKey: "sizes") as? [Data] == [json(shapes.sizes[0])])
+        #expect(encoded.object(forKey: "counts") as? Data == json(shapes.counts))
+        #expect(encoded.object(forKey: "maybe") as? Data == json(shapes.maybe))
+        #expect(encoded.object(forKey: "grid") as? Data == json(shapes.grid))
+        #expect(encoded.encryptedValues["pin"] as? Int64 == 4)
+        #expect(encoded.object(forKey: "pin") == nil)
+        #expect(try CKRecordDecoder().decode(Shapes.self, from: encoded) == shapes)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func setsAndClearsTheParent() throws {
+        let source = record(["folder": folderReference()])
+        source.parent = folderReference()
+        let parented = try CKRecordDecoder().decode(Parented.self, from: source)
+
+        let encoded = record()
+        try CKRecordEncoder().encode(parented, to: encoded)
+        #expect(encoded.parent?.recordID == folderReference().recordID)
+        #expect((encoded.object(forKey: "folder") as? CKRecord.Reference)?.recordID == folderReference().recordID)
+
+        try CKRecordEncoder().encode(Parented(id: id), to: encoded)
+        #expect(encoded.parent == nil)
+        #expect(encoded.object(forKey: "folder") == nil)
     }
 }
 

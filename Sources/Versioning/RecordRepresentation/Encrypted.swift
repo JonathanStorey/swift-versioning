@@ -71,7 +71,9 @@ extension KeyedDecodingContainer {
 }
 
 extension KeyedEncodingContainer {
+    /// Encodes a present value still wrapped, so a record encoder can see that it is
+    /// encrypted. The JSON is the same, since the wrapper encodes its value directly.
     public mutating func encode<Wrapped: Encodable>(_ value: Encrypted<Wrapped?>, forKey key: Key) throws {
-        try encodeIfPresent(value.wrappedValue, forKey: key)
+        try encodeIfPresent(value.wrappedValue.map { Encrypted<Wrapped>(wrappedValue: $0) }, forKey: key)
     }
 }
