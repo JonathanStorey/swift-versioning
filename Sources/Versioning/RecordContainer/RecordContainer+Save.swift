@@ -66,6 +66,67 @@ extension RecordContainer {
         }
     }
 
+    /// Deletes `record` on this device, identified by the value at `id`, as ``delete(id:)``
+    /// describes.
+    ///
+    /// ```swift
+    /// try container.delete(our: page, id: \.slug)
+    /// ```
+    func delete<Record: Encodable, ID: Encodable>(our record: Record, id: KeyPath<Record, ID>) throws {
+        try delete(id: Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self)))
+    }
+
+    /// Deletes an `Identifiable` `record` on this device, identified by its `id`.
+    func delete<Record: Encodable & Identifiable>(our record: Record) throws where Record.ID: Encodable {
+        try delete(our: record, id: \.id)
+    }
+
+    /// Deletes the record `id` on this device.
+    ///
+    /// A record the server has never confirmed is removed at once, since there is nothing
+    /// to delete there. Any other record waits to upload its delete, and its unsent changes,
+    /// any version waiting to merge, and any error are dropped. Saving the record again
+    /// before the delete uploads undoes it.
+    func delete(id: UUID) throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in
+            guard var row = try row(id: id) else { return }
+            guard row.metadata != nil || row.base != nil else { return try remove(id: id) }
+            row.isDeleted = true
+            row.ours = .none
+            row.theirs = .none
+            row.error = nil
+            try write(row)
+        }
+    }
+
+    /// Saves that the server no longer has the record `id`, because it confirmed this
+    /// device's delete or another device deleted it.
+    ///
+    /// The row is removed, unless this device has unsent changes. Those win: the row forgets
+    /// the server's version and keeps `ours`, so the next send creates the record again.
+    func save(deleted id: UUID) throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in
+            guard let row = try row(id: id) else { return }
+            guard let ours = row.ours, !row.isDeleted else { return try remove(id: id) }
+            try write(Row(id: id, zone: row.zone, type: row.type, ours: ours))
+        }
+    }
+
+    /// Removes every row on this device, sending nothing, as when the iCloud account signs
+    /// out or changes. Unlike ``delete(id:)``, nothing is deleted on the server.
+    func clear() throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in try run("DELETE FROM record") }
+    }
+
+    /// Removes every row in `zone` on this device, sending nothing, as when the zone was
+    /// deleted on the server. Unsent changes in the zone are dropped, since the zone they
+    /// belong to is gone.
+    func clear(in zone: Zone) throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in
+            try run("DELETE FROM record WHERE zone = ? AND owner = ?", zone.name, zone.owner)
+        }
+    }
+
     /// Changes the row for `id` by `change`, in one locked read and write. With no row for
     /// `id`, changes `new` and adds it, or does nothing when `new` is `nil`.
     func update(id: UUID, inserting new: Row? = nil, _ change: (inout Row) -> Void) throws(DatabaseError) {
@@ -104,6 +165,11 @@ private extension RecordContainer {
         } catch {
             throw DatabaseError(code: SQLITE_MISMATCH, description: "JSON could not be stored: \(error)")
         }
+    }
+
+    /// Removes the row for `id`.
+    func remove(id: UUID) throws(DatabaseError) {
+        try run("DELETE FROM record WHERE id = ?", id.uuidString)
     }
 
     /// Writes every column of `row`, replacing any row with the same id.

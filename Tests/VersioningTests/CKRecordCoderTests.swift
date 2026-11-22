@@ -411,4 +411,52 @@ private func noteContainer() -> RecordContainer {
         }
     }
 }
+
+@Suite struct RecordContainerDeleteUploadTests {
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func sendsADeleteOnlyWhenOneIsWaiting() throws {
+        let container = noteContainer()
+        try container.save(their: noteRecord("Hello"))
+        #expect(try container.send(deleted: id) == nil)
+
+        try container.delete(id: id)
+        #expect(try container.send(deleted: id) == CKRecord.ID(recordName: id.uuidString, zoneID: zoneID))
+        #expect(try container.send(id: id) == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aConfirmedDeleteRemovesTheRow() throws {
+        let container = noteContainer()
+        try container.save(their: noteRecord("Hello"))
+        try container.delete(id: id)
+        try container.save(deleted: try #require(try container.send(deleted: id)))
+        #expect(try container.row(id: id) == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aDeleteOfAMissingRecordCountsAsDone() throws {
+        let container = noteContainer()
+        try container.save(their: noteRecord("Hello"))
+        try container.delete(id: id)
+        try container.save(failed: try #require(try container.send(deleted: id)), error: CKError(.unknownItem))
+        #expect(try container.row(id: id) == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aRejectedDeleteKeepsItsErrorAndARetryableOneChangesNothing() throws {
+        let container = noteContainer()
+        try container.save(their: noteRecord("Hello"))
+        try container.delete(id: id)
+        let recordID = try #require(try container.send(deleted: id))
+
+        let before = try container.row(id: id)
+        try container.save(failed: recordID, error: CKError(.networkFailure))
+        #expect(try container.row(id: id) == before)
+
+        let error = CKError(.permissionFailure)
+        try container.save(failed: recordID, error: error)
+        #expect(try container.row(id: id)?.status == .rejected(error.localizedDescription))
+        #expect(try container.send(deleted: id) == nil)
+    }
+}
 #endif

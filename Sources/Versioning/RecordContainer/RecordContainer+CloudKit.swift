@@ -39,7 +39,7 @@ extension RecordContainer {
         guard let row = try row(id: id), let ours = row.ours, row.status == .waitingToUpload, !row.isDeleted else { return nil }
         let record = row.metadata.flatMap(CKRecord.init(systemFields:)) ?? CKRecord(
             recordType: row.type,
-            recordID: CKRecord.ID(recordName: id.uuidString, zoneID: CKRecordZone.ID(zoneName: row.zone.name, ownerName: row.zone.owner))
+            recordID: CKRecord.ID(recordName: id.uuidString, zoneID: row.zone.zoneID)
         )
         do {
             try CKRecordEncoder().encode(ours, as: registeredType(named: row.type), to: record)
@@ -86,10 +86,55 @@ extension RecordContainer {
         switch error.code {
         case .unknownItem:
             try update(id: id) { $0.metadata = nil }
-        case .zoneNotFound, .batchRequestFailed, .networkFailure, .networkUnavailable, .serviceUnavailable, .requestRateLimited, .zoneBusy:
+        case let code where code.isWorthRetrying:
             return
         default:
             try update(id: id) { $0.error = error.localizedDescription }
+        }
+    }
+
+    /// The id of the record to delete for the row `id`, or `nil` when it has no delete
+    /// waiting to upload.
+    ///
+    /// ```swift
+    /// let recordID = try container.send(deleted: note.id)
+    /// ```
+    func send(deleted id: UUID) throws(DatabaseError) -> CKRecord.ID? {
+        guard let row = try row(id: id), row.isDeleted, row.status == .waitingToUpload else { return nil }
+        return CKRecord.ID(recordName: id.uuidString, zoneID: row.zone.zoneID)
+    }
+
+    /// Saves that the server no longer has the record `id`, because it confirmed this
+    /// device's delete or another device deleted it, as `save(deleted:)` for a row id describes.
+    func save(deleted id: CKRecord.ID) throws(DatabaseError) {
+        guard let rowID = id.rowID else { return }
+        try save(deleted: rowID)
+    }
+
+    /// Removes every row in the zone `zoneID` on this device, as `clear(in:)` for a `Zone` describes.
+    ///
+    /// ```swift
+    /// for deletion in changes.deletions { try container.clear(in: deletion.zoneID) }
+    /// ```
+    func clear(in zoneID: CKRecordZone.ID) throws(DatabaseError) {
+        try clear(in: Zone(zoneID.zoneName, owner: zoneID.ownerName))
+    }
+
+    /// Saves why the server did not delete the record `id`, which this device sent.
+    ///
+    /// - A record the server no longer has is already deleted, so the row is removed.
+    /// - A missing zone, or a failure worth retrying, changes nothing, so the delete is sent again.
+    /// - Any other error is saved in `error`, and the delete waits until the record is deleted
+    ///   or saved again.
+    func save(failed id: CKRecord.ID, error: CKError) throws(DatabaseError) {
+        guard let rowID = id.rowID else { return }
+        switch error.code {
+        case .unknownItem:
+            try save(deleted: rowID)
+        case let code where code.isWorthRetrying:
+            return
+        default:
+            try update(id: rowID) { $0.error = error.localizedDescription }
         }
     }
 }
@@ -125,6 +170,23 @@ private extension CKRecordEncoder {
     /// Encodes `json`, decoded as `type`, into `record`, generic so a registered metatype opens here.
     func encode<T: Codable>(_ json: JSONRepresentation, as type: T.Type, to record: CKRecord) throws {
         try encode(json.decode(type), to: record)
+    }
+}
+
+private extension CKError.Code {
+    /// A missing zone, or a failure that may pass, after which a record is sent again unchanged.
+    var isWorthRetrying: Bool {
+        switch self {
+        case .zoneNotFound, .batchRequestFailed, .networkFailure, .networkUnavailable, .serviceUnavailable, .requestRateLimited, .zoneBusy: true
+        default: false
+        }
+    }
+}
+
+private extension Zone {
+    /// The zone's CloudKit id, with its owner.
+    var zoneID: CKRecordZone.ID {
+        CKRecordZone.ID(zoneName: name, ownerName: owner)
     }
 }
 
