@@ -35,8 +35,8 @@ private struct Sample: Codable, Identifiable {
     @Encrypted var secret: String = ""
     var home: Location
     @Asset var file: Data? = nil
-    @Reference(Folder.self) var folder: UUID? = nil
-    @References(Folder.self) var related: [UUID] = []
+    @Reference var folder: RecordID<Folder>? = nil
+    @References var related: [RecordID<Folder>] = []
     @Timestamp var updated: Date? = nil
 }
 
@@ -60,7 +60,7 @@ private struct Shapes: Codable, Equatable {
 
 private struct Parented: Codable {
     var id: UUID
-    @Reference(parent: Folder.self) var folder: UUID? = nil
+    @Reference(isParent: true) var folder: RecordID<Folder>? = nil
 }
 
 private struct Note: Codable, Identifiable, Mergeable {
@@ -140,8 +140,9 @@ private func fullSample() throws -> CKRecord {
         #expect(decoded.home == Location(home))
         #expect(decoded.$file == (sample.object(forKey: "file") as? CKAsset)?.fileURL)
         #expect(decoded.file == Data([9]))
-        #expect(decoded.folder == folderID)
-        #expect(decoded.related == [folderID])
+        let folder = RecordID<Folder>(name: folderID, zone: "Notes", owner: CKCurrentUserDefaultName)
+        #expect(decoded.folder == folder)
+        #expect(decoded.related == [folder])
         #expect(decoded.updated == nil)
     }
 
@@ -150,6 +151,8 @@ private func fullSample() throws -> CKRecord {
         let linked = record(["folder": folderReference(.deleteSelf)])
         let plain = try CKRecordDecoder().decode(Linked.self, from: linked).folder
         #expect(!plain.isParent)
+        #expect(plain.zone == "Notes")
+        #expect(plain.owner == CKCurrentUserDefaultName)
         #expect(plain.action == .deleteSelf)
         linked["folder"] = folderReference()
         linked.parent = folderReference()

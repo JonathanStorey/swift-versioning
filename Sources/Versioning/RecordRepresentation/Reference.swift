@@ -1,27 +1,24 @@
 import Foundation
 
-/// A read-only reference to another `Identifiable` model, stored as the
-/// target's `id`.
+/// A read-only reference to another record, stored as the target's ``RecordID``.
 ///
 /// ```swift
 /// struct Note: Codable, Identifiable {
 ///     var id: UUID
-///     @Reference(Folder.self, action: .deleteSelf) var folder: Folder.ID? = nil
+///     @Reference(action: .deleteSelf) var folder: RecordID<Folder>? = nil
 /// }
 ///
-/// let note = Note(id: UUID(), folder: folder.id)
-/// note.folder                      // Optional(folder.id)
+/// let note = Note(id: UUID(), folder: try RecordID(folder, zone: "Notes"))
+/// note.folder?.name                // the folder's record name
 /// ```
 ///
 /// The property is set when the model is created or decoded and cannot be
-/// assigned afterwards. The wrapper stores only the id and its action. It
-/// encodes a ``RecordRepresentation/Reference``, so a record encoder can
-/// tell a reference from a plain `UUID` and the action travels with it. A `nil` reference is left out of a keyed
-/// container, and a missing key decodes as `nil`.
-///
-/// The target's `id` must be a `UUID`, and the record name is its
-/// `uuidString`. That is always a valid CloudKit record name and reads back
-/// exactly, which a `String` id cannot promise.
+/// assigned afterwards. The target can be any type, identified however it is
+/// saved, because the reference holds where the record lives, not the
+/// target's own id. The wrapper encodes a ``RecordRepresentation/Reference``,
+/// so a record encoder can tell a reference from a plain value and the action
+/// travels with it. A `nil` reference is left out of a keyed container, and a
+/// missing key decodes as `nil`.
 ///
 /// The action follows `CKRecord.Reference`: with `.deleteSelf`, the record
 /// holding the property deletes itself when the target is deleted. A
@@ -29,35 +26,35 @@ import Foundation
 /// reference has the action `.none`, because Swift does not pass the
 /// attribute's arguments to `init(from:)`.
 ///
-/// `parent:` makes the target the record's parent, saved as the record's
+/// `isParent` makes the target the record's parent, saved as the record's
 /// `parent`. CloudKit shares a record together with every record whose
 /// parent points at it, so sharing a folder shares its notes:
 ///
 /// ```swift
-/// @Reference(parent: Folder.self) var folder: Folder.ID? = nil
+/// @Reference(isParent: true) var folder: RecordID<Folder>? = nil
 /// ```
 ///
 /// A parent has no action, because CloudKit requires a parent reference to
 /// have the action `.none`, and a record has at most one parent. The
 /// reference encodes `isParent`, so the flag survives decoding and merging.
 @propertyWrapper
-public struct Reference<Target: Identifiable>: Hashable, Sendable where Target.ID == UUID {
-    public let wrappedValue: UUID?
+public struct Reference<Target>: Hashable, Sendable {
+    public let wrappedValue: RecordID<Target>?
     public let action: RecordRepresentation.Reference.Action
     /// Whether the target is the record's parent.
     public let isParent: Bool
 
-    public init(wrappedValue: UUID? = nil, _ target: Target.Type, action: RecordRepresentation.Reference.Action = .none) {
+    public init(wrappedValue: RecordID<Target>? = nil, action: RecordRepresentation.Reference.Action = .none) {
         self.wrappedValue = wrappedValue
         self.action = action
         isParent = false
     }
 
-    /// A reference to the record's parent, with the action `.none`.
-    public init(wrappedValue: UUID? = nil, parent target: Target.Type) {
+    /// A reference to the record's parent when `isParent` is true, with the action `.none`.
+    public init(wrappedValue: RecordID<Target>? = nil, isParent: Bool) {
         self.wrappedValue = wrappedValue
         action = .none
-        isParent = true
+        self.isParent = isParent
     }
 }
 
@@ -65,21 +62,18 @@ extension Reference: Codable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         guard !container.decodeNil() else {
-            self.init(Target.self)
+            self.init()
             return
         }
         let reference = try container.decode(RecordRepresentation.Reference.self)
-        guard let id = UUID(uuidString: reference.recordName) else {
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Record name \"\(reference.recordName)\" is not a UUID.")
-        }
-        self = reference.isParent ? Reference(wrappedValue: id, parent: Target.self) : Reference(wrappedValue: id, Target.self, action: reference.action)
+        let id = try RecordID<Target>(reference, in: container)
+        self = reference.isParent ? Reference(wrappedValue: id, isParent: true) : Reference(wrappedValue: id, action: reference.action)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
         if let wrappedValue {
-            let recordName = wrappedValue.uuidString
-            try container.encode(isParent ? RecordRepresentation.Reference(parent: recordName) : RecordRepresentation.Reference(recordName: recordName, action: action))
+            try container.encode(wrappedValue.reference(action: action, isParent: isParent))
         } else {
             try container.encodeNil()
         }
@@ -91,7 +85,7 @@ extension Reference: Codable {
 // and `nil` when its key is missing.
 extension KeyedDecodingContainer {
     public func decode<Target>(_ type: Reference<Target>.Type, forKey key: Key) throws -> Reference<Target> {
-        try decodeIfPresent(type, forKey: key) ?? Reference(Target.self)
+        try decodeIfPresent(type, forKey: key) ?? Reference()
     }
 }
 
@@ -99,5 +93,26 @@ extension KeyedEncodingContainer {
     public mutating func encode<Target>(_ value: Reference<Target>, forKey key: Key) throws {
         guard value.wrappedValue != nil else { return }
         try encodeIfPresent(Optional(value), forKey: key)
+    }
+}
+
+extension RecordID {
+    /// The id a stored reference points at. Throws when its record name is not a UUID or
+    /// its zone is unknown.
+    init(_ reference: RecordRepresentation.Reference, in container: any SingleValueDecodingContainer) throws {
+        guard let name = UUID(uuidString: reference.recordName) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Record name \"\(reference.recordName)\" is not a UUID.")
+        }
+        guard let zone = reference.zone else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "The reference to \"\(reference.recordName)\" has no zone.")
+        }
+        self.init(name: name, zone: zone, owner: reference.owner ?? "__defaultOwner__")
+    }
+
+    /// This id as a stored reference.
+    func reference(action: RecordRepresentation.Reference.Action = .none, isParent: Bool = false) -> RecordRepresentation.Reference {
+        isParent
+            ? RecordRepresentation.Reference(parent: name.uuidString, zone: zone, owner: owner)
+            : RecordRepresentation.Reference(recordName: name.uuidString, zone: zone, owner: owner, action: action)
     }
 }

@@ -18,7 +18,7 @@ private struct Post: Codable, Equatable, Mergeable {
     var title = "Title"
     @Encrypted var hits = Hits(rawValue: 1)
     var place: Location? = nil
-    @References(Photo.self) var photos: [UUID] = []
+    @References var photos: [RecordID<Photo>] = []
 }
 
 private func file(containing text: String) throws -> URL {
@@ -34,6 +34,11 @@ private func location(at seconds: TimeInterval, latitude: Double = 1) -> Locatio
 private let a = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
 private let b = UUID(uuidString: "00000000-0000-0000-0000-0000000000B2")!
 private let c = UUID(uuidString: "00000000-0000-0000-0000-0000000000C3")!
+
+/// The id of a photo named `name` in the zone `"Z"`.
+private func id(_ name: UUID) -> RecordID<Photo> {
+    RecordID(name: name, zone: "Z")
+}
 
 @Suite struct RecordWrapperValueTests {
     @Test func anAssetIsItsURL() throws {
@@ -92,20 +97,20 @@ private let c = UUID(uuidString: "00000000-0000-0000-0000-0000000000C3")!
     }
 
     @Test func referencesKeepEverySidesAdditions() throws {
-        let base = References(wrappedValue: [a], Photo.self)
-        let ours = References(wrappedValue: [c, a], Photo.self)
-        let theirs = References(wrappedValue: [a, b], Photo.self, action: .deleteSelf)
+        let base = References<Photo>(wrappedValue: [id(a)])
+        let ours = References<Photo>(wrappedValue: [id(c), id(a)])
+        let theirs = References<Photo>(wrappedValue: [id(a), id(b)], action: .deleteSelf)
         let merged = try ours.merging(with: theirs, from: base)
-        #expect(merged.wrappedValue == [c, a, b])
+        #expect(merged.wrappedValue == [id(c), id(a), id(b)])
         #expect(merged.action == .deleteSelf, "Only theirs changed the action.")
         #expect(merged.storage == .field)
         #expect(throws: MergeConflict()) { try ours.merging(with: theirs) }
     }
 
     @Test func theDefaultMergeUsesEachWrappersMerge() throws {
-        let base = Post(hits: Hits(rawValue: 3), place: location(at: 0), photos: [a])
-        let ours = Post(title: "Ours", hits: Hits(rawValue: 5), place: location(at: 20), photos: [c, a])
-        let theirs = Post(hits: Hits(rawValue: 4), place: location(at: 10, latitude: 5), photos: [a, b])
-        #expect(try ours.merging(with: theirs, from: base) == Post(title: "Ours", hits: Hits(rawValue: 6), place: location(at: 20), photos: [c, a, b]))
+        let base = Post(hits: Hits(rawValue: 3), place: location(at: 0), photos: [id(a)])
+        let ours = Post(title: "Ours", hits: Hits(rawValue: 5), place: location(at: 20), photos: [id(c), id(a)])
+        let theirs = Post(hits: Hits(rawValue: 4), place: location(at: 10, latitude: 5), photos: [id(a), id(b)])
+        #expect(try ours.merging(with: theirs, from: base) == Post(title: "Ours", hits: Hits(rawValue: 6), place: location(at: 20), photos: [id(c), id(a), id(b)]))
     }
 }

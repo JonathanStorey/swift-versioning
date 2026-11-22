@@ -1,6 +1,6 @@
 import Foundation
 
-/// A read-only to-many relationship, holding the targets' ids in order.
+/// A read-only to-many relationship, holding the targets' ``RecordID``s in order.
 ///
 /// The initializer picks how the list is stored, and the property reads the
 /// same either way:
@@ -8,17 +8,17 @@ import Foundation
 /// ```swift
 /// struct Note: Codable, Identifiable {
 ///     var id: UUID
-///     @References(Attachment.self) var attachments: [UUID] = []   // a field on the record
-///     @References(to: \Tag.notes) var tags: [UUID] = []          // Relationship records
+///     @References var attachments: [RecordID<Attachment>] = []    // a field on the record
+///     @References(to: \Tag.notes) var tags: [RecordID<Tag>] = []  // Relationship records
 /// }
 ///
 /// struct Tag: Codable, Identifiable {
 ///     var id: UUID
-///     @References(from: \Note.tags) var notes: [UUID] = []        // the inverse
+///     @References(from: \Note.tags) var notes: [RecordID<Note>] = []   // the inverse
 /// }
 /// ```
 ///
-/// A target type alone stores the list as one reference list field, like
+/// No key path stores the list as one reference list field, like
 /// `CKRecord`'s own. It travels with the record, and two devices settle on
 /// one list.
 ///
@@ -43,8 +43,8 @@ import Foundation
 /// list takes the action of its first element, an empty list decodes with
 /// `.none`, and a decoded list's ``storage`` is `nil`. Equality and hashing compare the ids and the action only.
 @propertyWrapper
-public struct References<Target: Identifiable>: Sendable where Target.ID == UUID {
-    public let wrappedValue: [UUID]
+public struct References<Target>: Sendable {
+    public let wrappedValue: [RecordID<Target>]
     public let action: RecordRepresentation.Reference.Action
 
     /// How the list is stored, or `nil` when the wrapper was decoded,
@@ -73,7 +73,7 @@ public struct References<Target: Identifiable>: Sendable where Target.ID == UUID
         get throws { try inverseName?() }
     }
 
-    fileprivate init(wrappedValue: [UUID], action: RecordRepresentation.Reference.Action, storage: Storage?, inverseName: (@Sendable () throws -> String)? = nil) {
+    fileprivate init(wrappedValue: [RecordID<Target>], action: RecordRepresentation.Reference.Action, storage: Storage?, inverseName: (@Sendable () throws -> String)? = nil) {
         self.wrappedValue = wrappedValue
         self.action = action
         self.storage = storage
@@ -81,20 +81,20 @@ public struct References<Target: Identifiable>: Sendable where Target.ID == UUID
     }
 
     /// A list stored as one reference list field on the record.
-    public init(wrappedValue: [UUID] = [], _ target: Target.Type, action: RecordRepresentation.Reference.Action = .none) {
+    public init(wrappedValue: [RecordID<Target>] = [], action: RecordRepresentation.Reference.Action = .none) {
         self.init(wrappedValue: wrappedValue, action: action, storage: .field)
     }
 
     /// A list stored as ``Relationship`` records, declared on this side.
     /// `inverse` is the target's property that reads the same links back,
     /// and its root is the target type.
-    public init(wrappedValue: [UUID] = [], to inverse: KeyPath<Target, [UUID]>, action: RecordRepresentation.Reference.Action = .none) {
+    public init<Source>(wrappedValue: [RecordID<Target>] = [], to inverse: KeyPath<Target, [RecordID<Source>]>, action: RecordRepresentation.Reference.Action = .none) {
         self.init(wrappedValue: wrappedValue, action: action, storage: .links)
     }
 
     /// The inverse of the list at `declaringProperty`, reading the same
     /// ``Relationship`` records from the other side.
-    public init(wrappedValue: [UUID] = [], from declaringProperty: KeyPath<Target, [UUID]> & Sendable, action: RecordRepresentation.Reference.Action = .none) where Target: Decodable {
+    public init<Source>(wrappedValue: [RecordID<Target>] = [], from declaringProperty: KeyPath<Target, [RecordID<Source>]> & Sendable, action: RecordRepresentation.Reference.Action = .none) where Target: Decodable {
         self.init(wrappedValue: wrappedValue, action: action, storage: .inverse, inverseName: { try Self.linkName(of: declaringProperty) })
     }
 }
@@ -107,9 +107,9 @@ private extension References {
     /// reading the key path on a placeholder `Root` whose references each
     /// have a unique record name. It needs no runtime names, so it works in
     /// stripped builds and on Linux.
-    static func linkName<Root: Decodable>(of keyPath: KeyPath<Root, [UUID]>) throws -> String {
+    static func linkName<Root: Decodable, Element>(of keyPath: KeyPath<Root, [RecordID<Element>]>) throws -> String {
         let recorded = try JSONSchema.record(Root.self)
-        guard let marker = recorded.value[keyPath: keyPath].first, let key = recorded.markers[marker]?.first else {
+        guard let marker = recorded.value[keyPath: keyPath].first?.name, let key = recorded.markers[marker]?.first else {
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "The key path does not lead to a reference list that \(Root.self) decodes."))
         }
         return "\(Root.self).\(key)"
@@ -128,13 +128,14 @@ extension References: Hashable {
 }
 
 extension References {
-    /// The other ends of the links to the record `source`, sorted by its
+    /// The other ends of the links to the record `source`, in its zone, sorted by its
     /// side's order, `order` when it declares them and `inverseOrder` when
     /// it is an inverse, with unplaced links last.
-    public init(_ links: [Relationship], from source: UUID, action: RecordRepresentation.Reference.Action = .none) {
-        let order = { (link: Relationship) in link[orderIn: source] ?? .max }
+    public init<Source>(_ links: [Relationship], from source: RecordID<Source>, action: RecordRepresentation.Reference.Action = .none) {
+        let order = { (link: Relationship) in link[orderIn: source.name] ?? .max }
         let sorted = links.sorted { (order($0), $0.id.uuidString) < (order($1), $1.id.uuidString) }
-        self.init(wrappedValue: sorted.map { $0.target(from: source) }, action: action, storage: nil)
+        let targets = sorted.map { RecordID<Target>(name: $0.target(from: source.name), zone: source.zone, owner: source.owner) }
+        self.init(wrappedValue: targets, action: action, storage: nil)
     }
 }
 
@@ -144,7 +145,7 @@ extension References: Mergeable {
     /// the side that changed it, and how the list is stored is this
     /// version's.
     public func merging(with theirs: References, from base: References) throws(MergeConflict) -> References {
-        let ids = try RangeReplaceableCollectionElementMerge<[UUID]>().merge(base: base.wrappedValue, ours: wrappedValue, theirs: theirs.wrappedValue)
+        let ids = try RangeReplaceableCollectionElementMerge<[RecordID<Target>]>().merge(base: base.wrappedValue, ours: wrappedValue, theirs: theirs.wrappedValue)
         return References(wrappedValue: ids, action: action == base.action ? theirs.action : action, storage: storage, inverseName: inverseName)
     }
 
@@ -159,18 +160,13 @@ extension References: Codable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         let references = try container.decode([RecordRepresentation.Reference].self)
-        let ids = try references.map { reference in
-            guard let id = UUID(uuidString: reference.recordName) else {
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Record name \"\(reference.recordName)\" is not a UUID.")
-            }
-            return id
-        }
+        let ids = try references.map { try RecordID<Target>($0, in: container) }
         self.init(wrappedValue: ids, action: references.first?.action ?? .none, storage: nil)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.singleValueContainer()
-        try container.encode(wrappedValue.map { RecordRepresentation.Reference(recordName: $0.uuidString, action: action) })
+        try container.encode(wrappedValue.map { $0.reference(action: action) })
     }
 }
 

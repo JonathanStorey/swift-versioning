@@ -4,11 +4,11 @@ import Testing
 
 private struct Tag: Codable, Identifiable {
     var id: UUID
-    var notes: [UUID] = []
+    var notes: [RecordID<Note>] = []
 }
 
 private struct Note: Codable, Hashable {
-    @References(to: \Tag.notes) var tags: [UUID] = []
+    @References(to: \Tag.notes) var tags: [RecordID<Tag>] = []
 
     /// The wrapper's storage is private, so only this file can read it.
     var tagsStorage: References<Tag>.Storage? { _tags.storage }
@@ -19,19 +19,19 @@ private struct Attachment: Codable, Identifiable {
 }
 
 private struct Folder: Codable, Hashable {
-    @References(Attachment.self) var attachments: [UUID] = []
+    @References var attachments: [RecordID<Attachment>] = []
 
     var attachmentsStorage: References<Attachment>.Storage? { _attachments.storage }
 }
 
 private struct Post: Codable, Identifiable {
     var id: UUID
-    @References(to: \Label.posts) var labels: [UUID] = []
+    @References(to: \Label.posts) var labels: [RecordID<Label>] = []
 }
 
 private struct Label: Codable, Hashable, Identifiable {
     var id = UUID()
-    @References(from: \Post.labels) var posts: [UUID] = []
+    @References(from: \Post.labels) var posts: [RecordID<Post>] = []
 
     var postsStorage: References<Post>.Storage? { _posts.storage }
     var postsInverse: String? { get throws { try _posts.inverse } }
@@ -40,7 +40,7 @@ private struct Label: Codable, Hashable, Identifiable {
 /// Stores `labels` under another coding key.
 private struct Article: Codable, Identifiable {
     var id: UUID
-    @References(to: \Sticker.articles) var labels: [UUID] = []
+    @References(to: \Sticker.articles) var labels: [RecordID<Sticker>] = []
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -50,13 +50,13 @@ private struct Article: Codable, Identifiable {
 
 private struct Sticker: Codable, Identifiable {
     var id = UUID()
-    @References(from: \Article.labels) var articles: [UUID] = []
+    @References(from: \Article.labels) var articles: [RecordID<Article>] = []
 
     var articlesInverse: String? { get throws { try _articles.inverse } }
 }
 
 private struct Match: Codable, Hashable {
-    @References(Tag.self, action: .deleteSelf) var tags: [UUID] = []
+    @References(action: .deleteSelf) var tags: [RecordID<Tag>] = []
 
     var tagsAction: RecordRepresentation.Reference.Action { _tags.action }
 }
@@ -66,6 +66,11 @@ private struct Match: Codable, Hashable {
     private let a = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
     private let b = UUID(uuidString: "00000000-0000-0000-0000-0000000000B2")!
     private let c = UUID(uuidString: "00000000-0000-0000-0000-0000000000C3")!
+
+    /// The id of a record named `name` in the zone `"Z"`.
+    private func id<T>(_ name: UUID) -> RecordID<T> {
+        RecordID(name: name, zone: "Z")
+    }
 
     private func link(_ keyPath: String, from source: UUID, to target: UUID, order: Int? = nil, inverseOrder: Int? = nil) -> Relationship {
         var link = Relationship(keyPath: keyPath, from: source, to: target)
@@ -81,17 +86,17 @@ private struct Match: Codable, Hashable {
     }
 
     @Test func holdsTheIDsInOrder() {
-        #expect(Note(tags: [b, a]).tags == [b, a])
+        #expect(Note(tags: [id(b), id(a)]).tags == [id(b), id(a)])
         #expect(Note().tags == [])
     }
 
     @Test func encodesEachReferenceWithTheAction() throws {
-        #expect(try json(Note(tags: [a])) == #"{"tags":[{"action":"none","recordName":"00000000-0000-0000-0000-0000000000A1"}]}"#)
-        #expect(try json(Match(tags: [a])) == #"{"tags":[{"action":"deleteSelf","recordName":"00000000-0000-0000-0000-0000000000A1"}]}"#)
+        #expect(try json(Note(tags: [id(a)])) == #"{"tags":[{"action":"none","owner":"__defaultOwner__","recordName":"00000000-0000-0000-0000-0000000000A1","zone":"Z"}]}"#)
+        #expect(try json(Match(tags: [id(a)])) == #"{"tags":[{"action":"deleteSelf","owner":"__defaultOwner__","recordName":"00000000-0000-0000-0000-0000000000A1","zone":"Z"}]}"#)
     }
 
     @Test func keepsTheAction() throws {
-        let model = Match(tags: [a, b])
+        let model = Match(tags: [id(a), id(b)])
         let decoded = try JSONDecoder().decode(Match.self, from: JSONEncoder().encode(model))
         #expect(decoded == model)
         #expect(decoded.tagsAction == .deleteSelf)
@@ -110,7 +115,7 @@ private struct Match: Codable, Hashable {
     }
 
     @Test func decodedListHasNoStorageAndStillEqualsTheOriginal() throws {
-        let model = Note(tags: [a, b])
+        let model = Note(tags: [id(a), id(b)])
         let decoded = try JSONDecoder().decode(Note.self, from: JSONEncoder().encode(model))
         #expect(decoded.tagsStorage == nil)
         #expect(decoded == model)
@@ -118,7 +123,7 @@ private struct Match: Codable, Hashable {
     }
 
     @Test func fieldAndLinksEncodeAlike() throws {
-        #expect(try json(Folder(attachments: [a])) == #"{"attachments":[{"action":"none","recordName":"00000000-0000-0000-0000-0000000000A1"}]}"#)
+        #expect(try json(Folder(attachments: [id(a)])) == #"{"attachments":[{"action":"none","owner":"__defaultOwner__","recordName":"00000000-0000-0000-0000-0000000000A1","zone":"Z"}]}"#)
     }
 
     @Test func inverseSortsByInverseOrder() {
@@ -126,11 +131,15 @@ private struct Match: Codable, Hashable {
             link("Post.labels", from: a, to: note, order: 0, inverseOrder: 2),
             link("Post.labels", from: b, to: note, order: 5, inverseOrder: 1),
         ]
-        #expect(References<Post>(links, from: note).wrappedValue == [b, a])
+        #expect(References<Post>(links, from: id(note) as RecordID<Label>).wrappedValue == [id(b), id(a)])
     }
 
     @Test func rejectsARecordNameThatIsNotAUUID() {
-        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Note.self, from: Data(#"{"tags":[{"recordName":"42","action":"none"}]}"#.utf8)) }
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Note.self, from: Data(#"{"tags":[{"recordName":"42","zone":"Z","action":"none"}]}"#.utf8)) }
+    }
+
+    @Test func rejectsAReferenceWithNoZone() {
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Note.self, from: Data(#"{"tags":[{"recordName":"00000000-0000-0000-0000-0000000000A1","action":"none"}]}"#.utf8)) }
     }
 
     @Test func leavesOutAnEmptyList() throws {
@@ -139,7 +148,7 @@ private struct Match: Codable, Hashable {
     }
 
     @Test func roundTrips() throws {
-        let model = Note(tags: [a, b])
+        let model = Note(tags: [id(a), id(b)])
         #expect(try JSONDecoder().decode(Note.self, from: JSONEncoder().encode(model)) == model)
         #expect(try JSONRepresentation(model).decode(Note.self) == model)
     }
@@ -150,8 +159,8 @@ private struct Match: Codable, Hashable {
             link("Note.tags", from: note, to: c, inverseOrder: 0),
             link("Note.tags", from: note, to: b, order: 0),
         ]
-        let model = References<Tag>(links, from: note, action: .deleteSelf)
-        #expect(model.wrappedValue == [b, a, c])
+        let model = References<Tag>(links, from: id(note) as RecordID<Note>, action: .deleteSelf)
+        #expect(model.wrappedValue == [id(b), id(a), id(c)])
         #expect(model.action == .deleteSelf)
     }
 }

@@ -16,8 +16,8 @@ import CoreLocation
 /// - `String`, numbers, `Bool` (as 0 or 1), `Date` and `Data` from the value itself.
 /// - `URL` from a string, or from a `CKAsset`'s file, which is how `@Asset` reads.
 /// - ``Location`` from a `CLLocation`.
-/// - ``RecordRepresentation/Reference`` from a `CKRecord.Reference`, marked as the parent
-///   when it points at the record's `parent`.
+/// - ``RecordRepresentation/Reference`` from a `CKRecord.Reference`, with its zone and
+///   owner, and marked as the parent when it points at the record's `parent`.
 /// - Arrays and sets from lists.
 /// - Anything else, such as a nested value, a dictionary, or a list of lists, from `Data`
 ///   holding its JSON.
@@ -118,8 +118,9 @@ private extension FieldDecoder {
     func reference() throws -> RecordRepresentation.Reference {
         let reference = try cast(CKRecord.Reference.self)
         let name = reference.recordID.recordName
-        if record.parent?.recordID.recordName == name { return .init(parent: name) }
-        return .init(recordName: name, action: reference.action == .deleteSelf ? .deleteSelf : .none)
+        let zone = reference.recordID.zoneID
+        if record.parent?.recordID.recordName == name { return .init(parent: name, zone: zone.zoneName, owner: zone.ownerName) }
+        return .init(recordName: name, zone: zone.zoneName, owner: zone.ownerName, action: reference.action == .deleteSelf ? .deleteSelf : .none)
     }
 }
 
