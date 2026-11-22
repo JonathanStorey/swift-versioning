@@ -61,6 +61,16 @@ extension RecordContainer {
         }
     }
 
+    /// Changes the row for `id` by `change`, in one locked read and write. Does nothing
+    /// when the container has no row for `id`.
+    func update(id: UUID, _ change: (inout Row) -> Void) throws {
+        try locked {
+            guard var row = try row(id: id) else { return }
+            change(&row)
+            try write(row)
+        }
+    }
+
     /// The row for `id`, or `nil` when the container has none.
     func row(id: UUID) throws -> Row? {
         var row: Row?

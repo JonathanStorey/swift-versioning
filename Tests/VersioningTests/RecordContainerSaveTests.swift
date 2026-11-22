@@ -81,6 +81,18 @@ private func recordID<Record: Encodable, ID: Encodable>(of record: Record, id: K
         #expect(row.error == nil)
     }
 
+    @Test func updateChangesAnExistingRowOnly() throws {
+        let container = RecordContainer()
+        let note = Note(title: "Draft")
+        try container.save(our: note, zone: "Notes")
+        try container.update(id: note.id) { $0.error = "Record too large" }
+        let unknown = UUID()
+        try container.update(id: unknown) { $0.error = "Unused" }
+
+        #expect(try container.row(id: note.id)?.status == .rejected("Record too large"))
+        #expect(try container.row(id: unknown) == nil)
+    }
+
     @Test func anUnknownIdHasNoRow() throws {
         #expect(try RecordContainer().row(id: UUID()) == nil)
     }

@@ -75,4 +75,15 @@ extension RecordContainer.Row {
             self.error = String(describing: error)
         }
     }
+
+    /// Takes `sent`, a version this device uploaded and the server saved, as this row's `base`.
+    ///
+    /// Nothing merges, because the server now holds exactly what was sent. Changes saved
+    /// while it was on its way were made on top of it, so they stay in `ours` to upload
+    /// next, and an `ours` that still matches `sent` leaves nothing to upload.
+    mutating func confirm(_ sent: JSONRepresentation) {
+        base = sent
+        if ours == sent { ours = .none }
+        error = nil
+    }
 }

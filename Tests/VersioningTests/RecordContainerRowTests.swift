@@ -37,4 +37,22 @@ import Testing
         waiting.error = "title changed on both sides"
         #expect(waiting.status == .conflict("title changed on both sides"))
     }
+
+    @Test func aConfirmedUploadBecomesTheBase() {
+        var sent = row
+        sent.ours = ["title": "Ours"]
+        sent.error = "Record too large"
+        sent.confirm(["title": "Ours"])
+        #expect(sent.base == ["title": "Ours"])
+        #expect(sent.ours == nil)
+        #expect(sent.status == .synced)
+    }
+
+    @Test func changesSavedDuringAnUploadStayWaitingWithoutAConflict() {
+        var new = RecordContainer.Row(id: UUID(), zone: "Notes", type: "Note", ours: ["title": "Typed later"])
+        new.confirm(["title": "Typed first"])
+        #expect(new.base == ["title": "Typed first"])
+        #expect(new.ours == ["title": "Typed later"])
+        #expect(new.status == .waitingToUpload)
+    }
 }
