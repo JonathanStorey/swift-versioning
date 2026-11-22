@@ -253,7 +253,7 @@ private extension RecordContainer {
     /// Writes every column of `row`, replacing any row with the same id.
     func write(_ row: Row) throws(DatabaseError) {
         let text = { (json: JSONRepresentation?) throws(DatabaseError) -> String? in
-            try json.map { (json) throws(DatabaseError) in try Self.text(portable(json, id: row.id)) }
+            try json.map { (json) throws(DatabaseError) in try Self.text(self.portable(json, id: row.id)) }
         }
         try run("""
             INSERT OR REPLACE INTO record (id, zone, owner, type, metadata, base, ours, theirs, sent, is_deleted, error)
