@@ -32,16 +32,24 @@ public final class RecordContainer: @unchecked Sendable {
     ///
     /// The default, `.favoring(.ours)`, keeps this device's value at each conflicting
     /// field and merges everything else, the field-by-field "local edit wins" of Apple's
-    /// CloudKit samples. `.favoring(.theirs)` keeps the server's. `.favoring(nil)` lets the
-    /// conflict stand, so the row waits until another version settles it.
+    /// CloudKit samples. `.favoring(.theirs)` keeps the server's. A strategy must favor a
+    /// side, since a conflict left standing would stop the row from syncing: it asserts,
+    /// and favors ours.
     ///
     /// ```swift
     /// container.mergeStrategy = .favoring(.theirs)
     /// ```
     var mergeStrategy: DefaultMergeStrategy<JSONRepresentation> {
         get { locked { storedMergeStrategy } }
-        set { locked { storedMergeStrategy = newValue } }
+        set {
+            assert(newValue.favoring != nil, "A merge strategy must favor a side, so every merge settles.")
+            locked { storedMergeStrategy = newValue.favoring == nil ? .favoring(.ours) : newValue }
+        }
     }
+
+    /// The rows whose unused asset files wait for the transaction around them to end, or
+    /// `nil` outside a transaction. Read and written while locked.
+    var assetsToSweep: Set<UUID>?
 
     /// An empty container held in memory.
     public convenience init() {
@@ -105,8 +113,17 @@ extension RecordContainer {
 
     /// The result of `body`, run as one SQLite transaction: every write in it commits
     /// together, or, when it throws, none does.
+    ///
+    /// Asset files no longer used are removed only once it ends, so a rolled-back row
+    /// still finds its files, and files copied in for rows that never landed are removed.
     func transaction<T>(_ body: () throws(DatabaseError) -> T) throws(DatabaseError) -> T {
         try locked { () throws(DatabaseError) -> T in
+            assetsToSweep = []
+            defer {
+                let ids = assetsToSweep ?? []
+                assetsToSweep = nil
+                for id in ids { sweepAssets(id: id, of: try? row(id: id)) }
+            }
             try execute("BEGIN IMMEDIATE")
             do throws(DatabaseError) {
                 let result = try body()

@@ -246,13 +246,18 @@ private extension CKRecordEncoder {
     /// Encodes `json`, decoded as `type`, into `record`, generic so a registered metatype opens here.
     ///
     /// With a `base`, only the top-level fields whose JSON differs from it are set, since a
-    /// record uploads exactly the keys set on it. A field set to `nil` is cleared on the server.
+    /// record uploads exactly the keys set on it. A field set to `nil` is cleared on the
+    /// server, on the encrypted side when the base encoded it there.
     func encode<T: Codable>(_ json: JSONRepresentation, as type: T.Type, to record: CKRecord, changedFrom base: JSONRepresentation?) throws {
         let value = try json.decode(type)
         guard let base else { return try encode(value, to: record) }
         let scratch = CKRecord(recordType: record.recordType, recordID: record.recordID)
         try encode(value, to: scratch)
-        let encrypted = Set(Mirror(reflecting: value).properties.filter { $0.value is any EncryptedValue }.map { $0.name })
+        // A cleared field is in neither side of `scratch`, so the base's encoding says which
+        // side it was on, by the key the type encodes it under.
+        let before = CKRecord(recordType: record.recordType, recordID: record.recordID)
+        if let original = try? base.decode(type) { try? encode(original, to: before) }
+        let encrypted = Set(scratch.encryptedValues.allKeys() + before.encryptedValues.allKeys())
         for key in json.changedKeys(from: base) {
             if encrypted.contains(key) {
                 record.encryptedValues[key] = scratch.encryptedValues[key]

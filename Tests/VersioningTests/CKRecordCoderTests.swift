@@ -565,6 +565,17 @@ private struct Memo: Codable, Identifiable, Mergeable {
     @Encrypted var pin: Int? = nil
 }
 
+/// A record whose encrypted key differs from its property name.
+private struct Locked: Codable, Identifiable, Mergeable {
+    var id: UUID
+    @Encrypted var pin: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case pin = "pin_code"
+    }
+}
+
 @Suite struct RecordContainerChangedFieldTests {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     private func synced() throws -> RecordContainer {
@@ -595,6 +606,20 @@ private struct Memo: Codable, Identifiable, Mergeable {
         #expect(Set(sent.changedKeys()) == ["subtitle", "pin"])
         #expect(sent["subtitle"] == nil)
         #expect(sent.encryptedValues["pin"] == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func clearsAnEncryptedValueUnderACustomKeyOnTheEncryptedSide() throws {
+        let container = RecordContainer()
+        container.register(Locked.self)
+        let server = record(["id": id.uuidString as NSString], type: "Locked")
+        server.encryptedValues["pin_code"] = 4 as NSNumber
+        try container.save(their: server)
+        try container.save(our: Locked(id: id), zone: "Notes")
+
+        let sent = try #require(try container.send(id: id))
+        #expect(sent.encryptedValues.changedKeys() == ["pin_code"])
+        #expect(sent.encryptedValues["pin_code"] == nil)
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)

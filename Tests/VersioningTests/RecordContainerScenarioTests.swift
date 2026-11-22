@@ -51,6 +51,17 @@ private struct Photo: Codable, Identifiable, Mergeable {
     @Asset var picture: Data? = nil
 }
 
+/// A record whose keys differ from its property names.
+private struct Renamed: Codable, Identifiable, Mergeable {
+    var id: UUID
+    @Asset var photo: Data? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case photo = "photo_file"
+    }
+}
+
 private extension RecordContainer {
     /// A container holding `project` as the server's version, synced.
     static func synced(_ project: Project) throws -> RecordContainer {
@@ -300,6 +311,39 @@ private func temporaryFolder() -> URL {
         try container.clear(in: "Photos", resending: true)
         #expect(try container.ourBytes(id: id, field: "picture") == Data([5]))
         #expect(try container.row(id: id)?.status == .waitingToUpload)
+    }
+
+    @Test func anAssetUnderACustomKeyIsCopiedIn() throws {
+        let container = RecordContainer()
+        try container.save(our: Renamed(id: id, photo: Data([9])), zone: "Photos")
+        #expect(try container.ourBytes(id: id, field: "photo_file") == Data([9]))
+        guard case .string(let text)? = try container.row(id: id)?.ours?["photo_file"] else {
+            Issue.record("Expected a photo")
+            return
+        }
+        #expect(text.hasPrefix(container.assetFolder(id: id).absoluteString))
+    }
+
+    @Test func aRolledBackTransactionKeepsTheFilesItsRowsUse() throws {
+        let container = RecordContainer()
+        container.register(Photo.self)
+        try container.save(our: Photo(id: id, picture: Data([6])), zone: "Photos")
+        try container.update(id: id) { row in
+            row.metadata = Data([1])
+            row.confirm(row.ours!)
+        }
+
+        #expect(throws: DatabaseError.self) {
+            try container.transaction { () throws(DatabaseError) in
+                try container.update(id: id) { row in row.base = ["id": .string(id.uuidString), "caption": ""] }
+                throw DatabaseError(code: 1, description: "Stopped")
+            }
+        }
+        guard case .string(let text)? = try container.row(id: id)?.base?["picture"], let url = URL(string: text) else {
+            Issue.record("Expected a picture")
+            return
+        }
+        #expect(try Data(contentsOf: url) == Data([6]))
     }
 
     @Test func deletingANewRecordRemovesItsFiles() throws {
