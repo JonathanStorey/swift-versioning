@@ -332,9 +332,18 @@ let page = try RecordID(page, id: \.slug, zone: "Pages")   // a plain struct
 ```
 
 The name is the record's `UUID` id, or a stable hash of the type and any
-other id, the same name the record is saved under. The owner is
-`"__defaultOwner__"` in your own database, or the sharer's user record name
-for a zone shared with you.
+other id, the same name the record is saved under.
+
+A `Zone` is a zone as this device sees it, a name and an owner. A string
+literal is your own private zone, and `Zone.public` is the public database.
+A zone someone shared with you keeps its name and takes the sharer as its
+owner, so `zone.database` is `.private`, `.shared` or `.public` without
+storing it.
+
+```swift
+let notes: Zone = "Notes"        // private, the same as Zone("Notes")
+let board = Zone.public          // public
+```
 
 ### References
 

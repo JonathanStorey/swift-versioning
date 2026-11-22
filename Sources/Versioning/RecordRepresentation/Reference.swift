@@ -106,13 +106,13 @@ extension RecordID {
         guard let zone = reference.zone else {
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "The reference to \"\(reference.recordName)\" has no zone.")
         }
-        self.init(name: name, zone: zone, owner: reference.owner ?? "__defaultOwner__")
+        self.init(name: name, zone: Zone(zone, owner: reference.owner ?? Zone.defaultOwner))
     }
 
     /// This id as a stored reference.
     func reference(action: RecordRepresentation.Reference.Action = .none, isParent: Bool = false) -> RecordRepresentation.Reference {
         isParent
-            ? RecordRepresentation.Reference(parent: name.uuidString, zone: zone, owner: owner)
-            : RecordRepresentation.Reference(recordName: name.uuidString, zone: zone, owner: owner, action: action)
+            ? RecordRepresentation.Reference(parent: name.uuidString, zone: zone.name, owner: zone.owner)
+            : RecordRepresentation.Reference(recordName: name.uuidString, zone: zone.name, owner: zone.owner, action: action)
     }
 }

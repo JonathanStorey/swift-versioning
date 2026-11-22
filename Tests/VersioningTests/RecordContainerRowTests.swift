@@ -7,7 +7,7 @@ import Testing
 
     @Test func aRowWithNothingWaitingIsSynced() {
         #expect(row.status == .synced)
-        #expect(row.owner == "__defaultOwner__")
+        #expect(row.zone.owner == "__defaultOwner__")
     }
 
     @Test func savedChangesAndDeletesWaitToUpload() {

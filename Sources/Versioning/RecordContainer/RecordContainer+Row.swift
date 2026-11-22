@@ -5,9 +5,8 @@ extension RecordContainer {
     struct Row: Equatable, Sendable {
         /// The record's name in CloudKit, and the table's primary key.
         var id: UUID
-        var zone: String
-        /// The zone's owner: `CKCurrentUserDefaultName` in the private database, or the sharer in the shared database.
-        var owner: String = "__defaultOwner__"
+        /// The zone, with its owner: you for a private zone, or the sharer for a shared one.
+        var zone: Zone
         /// The CloudKit record type, checked when the row is read.
         var type: String
         /// The newest system fields from the server, or `nil` before the server first confirms the record.

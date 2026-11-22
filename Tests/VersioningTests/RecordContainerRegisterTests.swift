@@ -33,7 +33,7 @@ private extension RecordContainer {
     }
 
     func save(their note: Note) throws {
-        try save(their: json(note), id: note.id, zone: "Notes", owner: "__defaultOwner__", type: "Note", metadata: metadata)
+        try save(their: json(note), id: note.id, zone: "Notes", type: "Note", metadata: metadata)
     }
 }
 
@@ -101,7 +101,7 @@ private extension RecordContainer {
         let container = RecordContainer.registered()
         try container.save(their: Note(id: id))
         try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
-        try container.save(their: ["id": .string(id.uuidString), "title": 3], id: id, zone: "Notes", owner: "__defaultOwner__", type: "Note", metadata: metadata)
+        try container.save(their: ["id": .string(id.uuidString), "title": 3], id: id, zone: "Notes", type: "Note", metadata: metadata)
 
         let row = try #require(try container.row(id: id))
         #expect(row.ours == json(Note(id: id, title: "Ours")))
@@ -111,7 +111,7 @@ private extension RecordContainer {
 
     @Test func anUnregisteredTypeThrows() {
         #expect(throws: DecodingError.self) {
-            try RecordContainer().save(their: json(Note(id: id)), id: id, zone: "Notes", owner: "__defaultOwner__", type: "Note", metadata: nil)
+            try RecordContainer().save(their: json(Note(id: id)), id: id, zone: "Notes", type: "Note", metadata: nil)
         }
     }
 }
