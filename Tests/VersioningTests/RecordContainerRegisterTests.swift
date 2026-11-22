@@ -70,7 +70,8 @@ private extension RecordContainer {
         try container.save(their: Note(id: id))
         try container.save(our: Note(id: id, title: "Same"), zone: "Notes")
         try container.save(their: Note(id: id, title: "Same"))
-        #expect(try container.row(id: id)?.status == .synced)
+        let row = try #require(try container.row(id: id))
+        #expect(row.status == .synced, "\(row)")
     }
 
     @Test func aConflictWaitsWithoutTouchingOursOrBase() throws {
@@ -92,7 +93,8 @@ private extension RecordContainer {
         try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
         try container.save(their: Note(id: id, title: "Theirs"))
         try container.save(their: Note(id: id, title: "Ours"))
-        #expect(try container.row(id: id)?.status == .synced)
+        let row = try #require(try container.row(id: id))
+        #expect(row.status == .synced, "\(row)")
     }
 
     @Test func aVersionTheTypeCannotReadWaits() throws {
