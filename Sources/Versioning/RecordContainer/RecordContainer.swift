@@ -41,6 +41,7 @@ public final class RecordContainer: @unchecked Sendable {
         }
         self.connection = connection
         self.url = url
+        try execute(Self.createTable)
     }
 
     deinit {
