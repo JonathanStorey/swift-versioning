@@ -44,3 +44,34 @@ extension RecordContainer.Row {
         }
     }
 }
+
+extension RecordContainer.Row {
+    /// Takes `theirs`, the server's newest version, as this row's `base`.
+    ///
+    /// With no local changes, there is nothing to merge. With local changes, `theirs`
+    /// merges into `ours` by `merge`, the record type's own merge, and a merge that matches
+    /// `theirs` leaves nothing to upload. On a conflict, or a version the type cannot read,
+    /// `theirs` waits, `error` says why, and `ours` and `base` are unchanged, so nothing
+    /// uploads until it is settled.
+    mutating func receive(_ theirs: JSONRepresentation, merging merge: (_ ours: JSONRepresentation, _ theirs: JSONRepresentation, _ base: JSONRepresentation?) throws -> JSONRepresentation) {
+        guard let ours else {
+            base = theirs
+            self.theirs = nil
+            error = nil
+            return
+        }
+        do {
+            let merged = try merge(ours, theirs, base)
+            self.ours = merged == theirs ? nil : merged
+            base = theirs
+            self.theirs = nil
+            error = nil
+        } catch let conflict as MergeConflict {
+            self.theirs = theirs
+            error = "Both sides changed " + conflict.paths.map(\.description).joined(separator: ", ")
+        } catch {
+            self.theirs = theirs
+            self.error = String(describing: error)
+        }
+    }
+}

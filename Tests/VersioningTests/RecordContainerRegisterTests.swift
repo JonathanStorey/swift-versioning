@@ -1,0 +1,115 @@
+import Foundation
+import Testing
+@testable import Versioning
+
+private struct Hits: RawRepresentable, Codable, Equatable, Mergeable {
+    var rawValue: Int
+
+    func merging(with theirs: Hits, from base: Hits) throws(MergeConflict) -> Hits {
+        try merging(with: theirs, from: base, using: .rawValue(.sum()))
+    }
+}
+
+private struct Note: Codable, Identifiable, Mergeable {
+    var id: UUID
+    var title = "Base"
+    var body = "Base"
+    var hits = Hits(rawValue: 3)
+}
+
+private let id = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
+private let metadata = Data([7])
+
+// Encoding a Note cannot fail, and a non-throwing helper keeps comparisons inside #expect.
+private func json(_ note: Note) -> JSONRepresentation {
+    try! JSONRepresentation(note)
+}
+
+private extension RecordContainer {
+    static func registered() -> RecordContainer {
+        let container = RecordContainer()
+        container.register(Note.self)
+        return container
+    }
+
+    func save(their note: Note) throws {
+        try save(their: json(note), id: note.id, zone: "Notes", owner: "__defaultOwner__", type: "Note", metadata: metadata)
+    }
+}
+
+@Suite struct RecordContainerRegisterTests {
+    @Test func aNewRecordBecomesItsBase() throws {
+        let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        let row = try #require(try container.row(id: id))
+        #expect(row == RecordContainer.Row(id: id, zone: "Notes", type: "Note", metadata: metadata, base: json(Note(id: id))))
+        #expect(row.status == .synced)
+    }
+
+    @Test func aNewerVersionReplacesTheBaseWhenNothingIsWaiting() throws {
+        let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        try container.save(their: Note(id: id, title: "Newer"))
+        #expect(try container.row(id: id)?.base == json(Note(id: id, title: "Newer")))
+    }
+
+    @Test func localChangesMergeByTheTypesOwnMerge() throws {
+        let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        try container.save(our: Note(id: id, title: "Ours", hits: Hits(rawValue: 5)), zone: "Notes")
+        try container.save(their: Note(id: id, body: "Theirs", hits: Hits(rawValue: 4)))
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.ours == json(Note(id: id, title: "Ours", body: "Theirs", hits: Hits(rawValue: 6))), "Hits sums, as Note's own merge does.")
+        #expect(row.base == json(Note(id: id, body: "Theirs", hits: Hits(rawValue: 4))))
+        #expect(row.status == .waitingToUpload)
+    }
+
+    @Test func aChangeTheServerAlreadyHasLeavesNothingToUpload() throws {
+        let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        try container.save(our: Note(id: id, title: "Same"), zone: "Notes")
+        try container.save(their: Note(id: id, title: "Same"))
+        #expect(try container.row(id: id)?.status == .synced)
+    }
+
+    @Test func aConflictWaitsWithoutTouchingOursOrBase() throws {
+        let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
+        try container.save(their: Note(id: id, title: "Theirs"))
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.ours == json(Note(id: id, title: "Ours")))
+        #expect(row.base == json(Note(id: id)))
+        #expect(row.theirs == json(Note(id: id, title: "Theirs")))
+        #expect(row.status == .conflict("Both sides changed $.title"))
+    }
+
+    @Test func aNewerVersionCanSettleAConflict() throws {
+        let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
+        try container.save(their: Note(id: id, title: "Theirs"))
+        try container.save(their: Note(id: id, title: "Ours"))
+        #expect(try container.row(id: id)?.status == .synced)
+    }
+
+    @Test func aVersionTheTypeCannotReadWaits() throws {
+        let container = RecordContainer.registered()
+        try container.save(their: Note(id: id))
+        try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
+        try container.save(their: ["id": .string(id.uuidString), "title": 3], id: id, zone: "Notes", owner: "__defaultOwner__", type: "Note", metadata: metadata)
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.ours == json(Note(id: id, title: "Ours")))
+        #expect(row.theirs?["title"] == 3)
+        #expect(row.error != nil)
+    }
+
+    @Test func anUnregisteredTypeThrows() {
+        #expect(throws: DecodingError.self) {
+            try RecordContainer().save(their: json(Note(id: id)), id: id, zone: "Notes", owner: "__defaultOwner__", type: "Note", metadata: nil)
+        }
+    }
+}

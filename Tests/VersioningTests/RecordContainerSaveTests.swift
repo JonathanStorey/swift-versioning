@@ -7,25 +7,25 @@ private struct Note: Codable, Identifiable {
     var title: String
 }
 
-@Suite struct RecordContainerUpsertTests {
+@Suite struct RecordContainerSaveTests {
     @Test func aNewRecordIsWaitingToUpload() throws {
         let container = RecordContainer()
         let note = Note(title: "Draft")
-        try container.upsert(our: note, zone: "Notes")
+        try container.save(our: note, zone: "Notes")
 
         let row = try #require(try container.row(id: note.id))
         #expect(row == RecordContainer.Row(id: note.id, zone: "Notes", type: "Note", ours: ["id": .string(note.id.uuidString), "title": "Draft"]))
         #expect(row.status == .waitingToUpload)
     }
 
-    @Test func upsertingAgainReplacesOursAndKeepsTheRest() throws {
+    @Test func savingAgainReplacesOursAndKeepsTheRest() throws {
         let container = RecordContainer()
         var note = Note(title: "First")
-        try container.upsert(our: note, zone: "Notes")
+        try container.save(our: note, zone: "Notes")
         try container.execute("UPDATE record SET base = '{\"title\":\"Base\"}', is_deleted = 1, error = 'Record too large'")
 
         note.title = "Second"
-        try container.upsert(our: note, zone: "Elsewhere", owner: "someone")
+        try container.save(our: note, zone: "Elsewhere", owner: "someone")
 
         let row = try #require(try container.row(id: note.id))
         #expect(row.ours?["title"] == "Second")
@@ -44,7 +44,7 @@ private struct Note: Codable, Identifiable {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite")
         defer { try? FileManager.default.removeItem(at: url) }
         let note = Note(title: "Kept")
-        try RecordContainer(url: url).upsert(our: note, zone: "Notes")
+        try RecordContainer(url: url).save(our: note, zone: "Notes")
         #expect(try RecordContainer(url: url).row(id: note.id)?.ours?["title"] == "Kept")
     }
 }
