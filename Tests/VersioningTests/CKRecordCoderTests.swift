@@ -264,23 +264,28 @@ private func json(_ value: some Encodable) -> Data {
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    @Test func keepsARecordItCannotReadWithTheReason() throws {
+    @Test func skipsANewRecordItCannotRead() throws {
         for (registered, type) in [(true, "Note"), (false, "Other")] {
             let container = RecordContainer()
             if registered { container.register(Note.self) }
             try container.save(their: record(["title": "Hello" as NSString], type: type))
-
-            let row = try #require(try container.row(id: id))
-            let metadata = try #require(row.metadata)
-            // Archived the way system fields are, so it reads back through CKRecord(coder:).
-            let unarchiver = try NSKeyedUnarchiver(forReadingFrom: metadata)
-            unarchiver.requiresSecureCoding = true
-            let kept = try #require(CKRecord(coder: unarchiver))
-            #expect(kept["title"] as? String == "Hello")
-            #expect(row.type == type)
-            #expect(row.base == nil)
-            #expect(row.error?.contains("could not read") == true, "\(row)")
+            #expect(try container.row(id: id) == nil)
         }
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func aVersionItCannotReadKeepsTheRowsContent() throws {
+        let container = RecordContainer()
+        container.register(Note.self)
+        try container.save(their: record(["id": id.uuidString as NSString, "title": "Hello" as NSString], type: "Note"))
+        try container.save(our: Note(id: id, title: "Ours"), zone: "Notes")
+        try container.save(their: record(["title": "Newer" as NSString], type: "Note"))
+
+        let row = try #require(try container.row(id: id))
+        #expect(row.base == (try? JSONRepresentation(Note(id: id, title: "Hello"))))
+        #expect(row.ours == (try? JSONRepresentation(Note(id: id, title: "Ours"))))
+        #expect(row.metadata != nil)
+        #expect(row.status == .waitingToUpload, "\(row)")
     }
 }
 
