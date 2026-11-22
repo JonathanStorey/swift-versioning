@@ -9,7 +9,7 @@ private struct Folder: Identifiable {
     var id: UUID
 }
 
-private enum Mood: String, Codable, CaseIterable {
+private enum Mood: String, Codable {
     case calm, busy
 }
 
@@ -163,13 +163,6 @@ private func fullSample() throws -> CKRecord {
     }
 }
 
-/// The record schema without `"id"`, which the coders map to the record's name.
-private func schema<T: Decodable>(_ type: T.Type) throws -> RecordSchema {
-    var schema = try RecordSchema(for: type)
-    schema.fields["id"] = nil
-    return schema
-}
-
 /// The JSON bytes the encoder stores for a nested value. Encoding these cannot fail.
 private func json(_ value: some Encodable) -> Data {
     Data(try! JSONRepresentation(value).description.utf8)
@@ -191,17 +184,6 @@ private func json(_ value: some Encodable) -> Data {
         #expect(!encoded.allKeys().contains("id"))
         #expect(!encoded.allKeys().contains("subtitle"))
         #expect(!encoded.allKeys().contains("updated"))
-    }
-
-    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
-    @Test func writesTheFieldTypesRecordSchemaNames() throws {
-        let encoded = record()
-        try CKRecordEncoder().encode(CKRecordDecoder().decode(Sample.self, from: fullSample()), to: encoded)
-        #expect(try schema(Sample.self).contains(encoded))
-
-        let shapes = record(type: "Shapes")
-        try CKRecordEncoder().encode(Shapes(id: id, sizes: [Size(width: 1, height: 2)], counts: ["a": 1], maybe: ["b", nil], grid: [[1], [2, 3]], pin: 4), to: shapes)
-        #expect(try schema(Shapes.self).contains(shapes))
     }
 
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)

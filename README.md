@@ -514,51 +514,6 @@ wrapper cannot go, as in a SwiftData model, a plain property holds the same
 value: `var attachment: Asset` with `rawValue: URL?`, or
 `var pin: Encrypted<Int>` with `rawValue: Int`.
 
-## RecordSchema
-
-`RecordSchema(for:)` describes the fields a `Decodable` type stores in a
-CloudKit record, from the type alone, and tells you whether two versions of
-it can read each other's records.
-
-```swift
-let saved = try RecordSchema(for: NoteV1.self)
-let current = try RecordSchema(for: NoteV2.self)
-
-current.isSuperset(of: saved)     // V2 can read every record V1 saved
-current.isSubset(of: saved)       // V1 can read every record V2 saves
-current.isCompatible(with: saved) // both directions
-current.fields["created"]?.type   // TIMESTAMP
-```
-
-Each field has its CloudKit type, whether it is encrypted, and the
-`JSONSchema` of what it holds. `Date` is `TIMESTAMP`, `Data` is `BYTES`,
-`Location` is `LOCATION`, `@Asset` is `ASSET`, references are `REFERENCE`,
-arrays are `LIST`, and a nested value or a list of optionals is `BYTES`, because a CloudKit list cannot hold `nil`. `@Timestamp` and
-`@Transient` properties are never written, so they are not fields.
-
-The checks are stricter than `JSONSchema`'s, because CloudKit never changes
-a field once it reaches production. A field's type and encryption must
-match, so `Int` to `Double` is incompatible. A new field must be optional,
-fields the reader does not declare are ignored, and enum cases must cover
-what the other side can write. Moving a `@References` list between a field
-and `Relationship` records does not change the type, so treat it as a
-migration.
-
-`id` is a stable `UUID` computed from the schema, and a schema stored with
-`Codable` reads back equal.
-
-On Apple platforms with CloudKit encryption (macOS 12, iOS 15 and later),
-`contains(_:)` asks whether the type can read a
-`CKRecord` it fetched, such as one saved by a newer version of the app:
-
-```swift
-schema.contains(record)          // Note can read this CKRecord
-```
-
-The record type must match, every required field must be present with the
-field's CloudKit type, encrypted fields must be in `encryptedValues`, and an
-enum field must hold one of its cases.
-
 ## RecordContainer
 
 `RecordContainer` is the database that holds records, a SQLite connection
