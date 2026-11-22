@@ -56,9 +56,10 @@ private struct Note: Codable, Identifiable, Mergeable {
 private let id = UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!
 private let folderID = UUID(uuidString: "00000000-0000-0000-0000-0000000000F1")!
 
+private let zoneID = CKRecordZone.ID(zoneName: "Notes", ownerName: CKCurrentUserDefaultName)
+
 @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 private func record(_ values: [String: CKRecordValue] = [:], type: String = "Sample", name: String = id.uuidString) -> CKRecord {
-    let zoneID = CKRecordZone.ID(zoneName: "Notes", ownerName: CKCurrentUserDefaultName)
     let record = CKRecord(recordType: type, recordID: CKRecord.ID(recordName: name, zoneID: zoneID))
     for (key, value) in values { record[key] = value }
     return record
@@ -66,7 +67,7 @@ private func record(_ values: [String: CKRecordValue] = [:], type: String = "Sam
 
 @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 private func folderReference(_ action: CKRecord.ReferenceAction = .none) -> CKRecord.Reference {
-    CKRecord.Reference(recordID: CKRecord.ID(recordName: folderID.uuidString), action: action)
+    CKRecord.Reference(recordID: CKRecord.ID(recordName: folderID.uuidString, zoneID: zoneID), action: action)
 }
 
 @Suite struct CKRecordDecoderTests {
