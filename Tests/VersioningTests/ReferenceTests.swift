@@ -82,7 +82,7 @@ private struct Child: Codable, Hashable {
     }
 
     @Test func keepsTheZoneAndOwner() throws {
-        let shared = RecordID<Folder>(name: folderID.name, zone: "Shared", owner: "_8a2f")
+        let shared = RecordID<Folder>(name: folderID.name, zone: Zone("Shared", owner: "_8a2f"))
         let decoded = try JSONDecoder().decode(Note.self, from: JSONEncoder().encode(Note(id: noteID, folder: shared)))
         #expect(decoded.folder == shared)
     }

@@ -6,7 +6,7 @@ extension RecordContainer {
     /// system fields as `metadata`.
     ///
     /// The record's name, a UUID from ``recordID(for:type:)``, is the row's id, and its zone and
-    /// owner come from the record's zone. The decoded value merges into the row as ``save(their:id:zone:owner:type:metadata:)``
+    /// owner come from the record's zone. The decoded value merges into the row as ``save(their:id:zone:type:metadata:)``
     /// describes. Throws, saving nothing, when the record's name is not a UUID, its type is
     /// not registered, or the type cannot decode it.
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
@@ -19,8 +19,7 @@ extension RecordContainer {
         try save(
             their: CKRecordDecoder().json(registered, from: record),
             id: id,
-            zone: recordID.zoneID.zoneName,
-            owner: recordID.zoneID.ownerName,
+            zone: Zone(recordID.zoneID.zoneName, owner: recordID.zoneID.ownerName),
             type: record.recordType,
             metadata: record.systemFields
         )

@@ -25,25 +25,25 @@ extension RecordContainer {
     ///
     /// The row's id comes from the value at `id`, by ``recordID(for:type:)``. A new id adds
     /// a row. An existing id replaces `ours`, clears `isDeleted` and `error`, and keeps
-    /// `base`, `theirs`, `metadata`, the zone and the owner, in one statement.
+    /// `base`, `theirs`, `metadata` and the zone, in one statement.
     ///
     /// ```swift
     /// try container.save(our: page, id: \.slug, zone: "Pages")
     /// ```
-    func save<Record: Encodable, ID: Encodable>(our record: Record, id: KeyPath<Record, ID>, zone: String, owner: String = "__defaultOwner__") throws {
+    func save<Record: Encodable, ID: Encodable>(our record: Record, id: KeyPath<Record, ID>, zone: Zone) throws {
         let id = try Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self))
         let ours = try Self.text(JSONRepresentation(record))
         try locked {
             try run("""
                 INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
-                """, id.uuidString, zone, owner, Self.recordType(of: Record.self), ours)
+                """, id.uuidString, zone.name, zone.owner, Self.recordType(of: Record.self), ours)
         }
     }
 
     /// Saves an `Identifiable` `record` as this device's version, identified by its `id`.
-    func save<Record: Encodable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID: Encodable {
-        try save(our: record, id: \.id, zone: zone, owner: owner)
+    func save<Record: Encodable & Identifiable>(our record: Record, zone: Zone) throws where Record.ID: Encodable {
+        try save(our: record, id: \.id, zone: zone)
     }
 
     /// Saves the server's version of the record `id`, with its system fields as `metadata`.
@@ -51,10 +51,10 @@ extension RecordContainer {
     /// A new record, or one with no local changes, takes `json` as its `base`. With local
     /// changes waiting, `json` merges into `ours` first, by the registered type's own merge.
     /// See ``Row/receive(_:merging:)``. Throws when `type` is not registered.
-    func save(their json: JSONRepresentation, id: UUID, zone: String, owner: String, type: String, metadata: Data?) throws {
+    func save(their json: JSONRepresentation, id: UUID, zone: Zone, type: String, metadata: Data?) throws {
         let registered = try registeredType(named: type)
         try locked {
-            var row = try row(id: id) ?? Row(id: id, zone: zone, owner: owner, type: type)
+            var row = try row(id: id) ?? Row(id: id, zone: zone, type: type)
             row.metadata = metadata
             row.receive(json) { ours, theirs, base in try ours.merging(with: theirs, from: base, as: registered) }
             try write(row)
@@ -67,8 +67,7 @@ extension RecordContainer {
         try run("SELECT zone, owner, type, metadata, base, ours, theirs, is_deleted, error FROM record WHERE id = ?", id.uuidString) { statement in
             row = Row(
                 id: id,
-                zone: statement.text(at: 0) ?? "",
-                owner: statement.text(at: 1) ?? "",
+                zone: Zone(statement.text(at: 0) ?? "", owner: statement.text(at: 1) ?? ""),
                 type: statement.text(at: 2) ?? "",
                 metadata: statement.blob(at: 3),
                 base: try statement.json(at: 4),
@@ -93,7 +92,7 @@ private extension RecordContainer {
         try run("""
             INSERT OR REPLACE INTO record (id, zone, owner, type, metadata, base, ours, theirs, is_deleted, error)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, row.id.uuidString, row.zone, row.owner, row.type, row.metadata,
+            """, row.id.uuidString, row.zone.name, row.zone.owner, row.type, row.metadata,
             try row.base.map(Self.text), try row.ours.map(Self.text), try row.theirs.map(Self.text), row.isDeleted, row.error)
     }
 

@@ -134,7 +134,7 @@ extension References {
     public init<Source>(_ links: [Relationship], from source: RecordID<Source>, action: RecordRepresentation.Reference.Action = .none) {
         let order = { (link: Relationship) in link[orderIn: source.name] ?? .max }
         let sorted = links.sorted { (order($0), $0.id.uuidString) < (order($1), $1.id.uuidString) }
-        let targets = sorted.map { RecordID<Target>(name: $0.target(from: source.name), zone: source.zone, owner: source.owner) }
+        let targets = sorted.map { RecordID<Target>(name: $0.target(from: source.name), zone: source.zone) }
         self.init(wrappedValue: targets, action: action, storage: nil)
     }
 }
