@@ -10,12 +10,22 @@ extension RecordContainer {
     /// `json` with the file at each of `files`, by field, copied into the row's folder under
     /// a new name, and the field pointing at the copy.
     ///
-    /// A file already in the folder is kept as it is. A file that cannot be copied keeps
-    /// its URL. On APFS the copy is a clone, which shares the original's blocks.
+    /// A file already in the folder is kept as it is. A file with the same bytes as one the
+    /// field already has in the folder points at that one instead, so saving the same bytes
+    /// again is no change and uploads nothing. A file that cannot be copied keeps its URL.
+    /// On APFS the copy is a clone, which shares the original's blocks.
     func storingAssets(_ files: [String: URL], in json: JSONRepresentation, id: UUID) -> JSONRepresentation {
         let folder = assetFolder(id: id)
+        let existing = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
         var stored: [String: JSONRepresentation] = [:]
         for (key, file) in files where !file.absoluteString.hasPrefix(folder.absoluteString) {
+            let same = existing.first { name in
+                name.hasPrefix("\(key)-") && FileManager.default.contentsEqual(atPath: folder.appendingPathComponent(name).path, andPath: file.path)
+            }
+            if let same {
+                stored[key] = .string(folder.appendingPathComponent(same).absoluteString)
+                continue
+            }
             // Named for its field, so a folder reads at a glance, and unique, so no version's
             // file is ever replaced.
             let copy = folder.appendingPathComponent("\(key)-\(UUID().uuidString)")
