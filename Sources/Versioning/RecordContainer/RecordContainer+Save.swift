@@ -23,11 +23,15 @@ extension RecordContainer {
 
     /// Saves `record` as this device's version: `ours`, waiting to upload.
     ///
-    /// The row's id is ``recordID(of:)``, so `Record` must be registered. A new id adds a
-    /// row. An existing id replaces `ours`, clears `isDeleted` and `error`, and keeps `base`,
-    /// `theirs`, `metadata`, the zone and the owner, in one statement.
-    func save<Record: Encodable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws {
-        let id = try recordID(of: record)
+    /// The row's id comes from the value at `id`, by ``recordID(for:type:)``. A new id adds
+    /// a row. An existing id replaces `ours`, clears `isDeleted` and `error`, and keeps
+    /// `base`, `theirs`, `metadata`, the zone and the owner, in one statement.
+    ///
+    /// ```swift
+    /// try container.save(our: page, id: \.slug, zone: "Pages")
+    /// ```
+    func save<Record: Encodable, ID: Encodable>(our record: Record, id: KeyPath<Record, ID>, zone: String, owner: String = "__defaultOwner__") throws {
+        let id = try Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self))
         let ours = try Self.text(JSONRepresentation(record))
         try locked {
             try run("""
@@ -35,6 +39,11 @@ extension RecordContainer {
                 ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
                 """, id.uuidString, zone, owner, Self.recordType(of: Record.self), ours)
         }
+    }
+
+    /// Saves an `Identifiable` `record` as this device's version, identified by its `id`.
+    func save<Record: Encodable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID: Encodable {
+        try save(our: record, id: \.id, zone: zone, owner: owner)
     }
 
     /// Saves the server's version of the record `id`, with its system fields as `metadata`.

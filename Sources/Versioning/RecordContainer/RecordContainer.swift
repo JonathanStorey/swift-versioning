@@ -17,8 +17,8 @@ public final class RecordContainer: @unchecked Sendable {
     let connection: OpaquePointer
     // Serializes registering, and a read of a row with the write that follows it.
     private let lock = NSLock()
-    /// The registered record types and their ids, by record type name. Read and written while locked.
-    var registrations: [String: Registration] = [:]
+    /// The registered record types, by record type name. Read and written while locked.
+    var registrations: [String: RecordType] = [:]
 
     /// An empty container held in memory.
     public convenience init() {

@@ -229,8 +229,8 @@ private func json(_ value: some Encodable) -> Data {
     @Test func savesARecordNamedByAHashOfItsID() throws {
         let page = Page(slug: "intro", title: "Hello")
         let container = RecordContainer()
-        container.register(Page.self, id: \.slug)
-        let name = try container.recordID(of: page)
+        container.register(Page.self)
+        let name = try RecordContainer.recordID(for: page.slug, type: "Page")
         try container.save(their: record(["slug": "intro" as NSString, "title": "Hello" as NSString], type: "Page", name: name.uuidString))
 
         let row = try #require(try container.row(id: name))
