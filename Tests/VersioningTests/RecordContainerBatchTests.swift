@@ -54,4 +54,16 @@ private extension RecordContainer {
         #expect(pending.contains { $0.id == saved.id && !$0.isDeleted && $0.zone == "Notes" })
         #expect(pending.contains { $0.id == deleted.id && $0.isDeleted })
     }
+
+    @Test func zonesListsEachZoneOnce() throws {
+        let container = RecordContainer()
+        try container.save(our: Note(title: "A"), zone: "Notes")
+        try container.save(our: Note(title: "B"), zone: "Notes")
+        try container.save(our: Note(title: "C"), zone: Zone("Notes", owner: "someone"))
+        try container.save(our: Note(title: "D"), zone: .public)
+
+        let zones = try container.zones()
+        #expect(zones == ["Notes", Zone("Notes", owner: "someone"), .public])
+        #expect(zones.filter { $0.database == .private } == ["Notes"])
+    }
 }

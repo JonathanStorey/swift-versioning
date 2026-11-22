@@ -260,7 +260,7 @@ private extension CKError.Code {
     }
 }
 
-private extension Zone {
+extension Zone {
     /// The zone's CloudKit id, with its owner.
     var zoneID: CKRecordZone.ID {
         CKRecordZone.ID(zoneName: name, ownerName: owner)
