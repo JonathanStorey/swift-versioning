@@ -64,6 +64,37 @@ extension RecordContainer {
         }
     }
 
+    /// Deletes the record `id` on this device.
+    ///
+    /// A record the server has never confirmed is removed at once, since there is nothing
+    /// to delete there. Any other record waits to upload its delete, and its unsent changes,
+    /// any version waiting to merge, and any error are dropped. Saving the record again
+    /// before the delete uploads undoes it.
+    func delete(id: UUID) throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in
+            guard var row = try row(id: id) else { return }
+            guard row.metadata != nil || row.base != nil else { return try remove(id: id) }
+            row.isDeleted = true
+            row.ours = .none
+            row.theirs = .none
+            row.error = nil
+            try write(row)
+        }
+    }
+
+    /// Saves that the server no longer has the record `id`, because it confirmed this
+    /// device's delete or another device deleted it.
+    ///
+    /// The row is removed, unless this device has unsent changes. Those win: the row forgets
+    /// the server's version and keeps `ours`, so the next send creates the record again.
+    func save(deleted id: UUID) throws(DatabaseError) {
+        try locked { () throws(DatabaseError) in
+            guard let row = try row(id: id) else { return }
+            guard let ours = row.ours, !row.isDeleted else { return try remove(id: id) }
+            try write(Row(id: id, zone: row.zone, type: row.type, ours: ours))
+        }
+    }
+
     /// Changes the row for `id` by `change`, in one locked read and write. With no row for
     /// `id`, changes `new` and adds it, or does nothing when `new` is `nil`.
     func update(id: UUID, inserting new: Row? = nil, _ change: (inout Row) -> Void) throws(DatabaseError) {
@@ -102,6 +133,11 @@ private extension RecordContainer {
         } catch {
             throw DatabaseError(code: SQLITE_MISMATCH, description: "JSON could not be stored: \(error)")
         }
+    }
+
+    /// Removes the row for `id`.
+    func remove(id: UUID) throws(DatabaseError) {
+        try run("DELETE FROM record WHERE id = ?", id.uuidString)
     }
 
     /// Writes every column of `row`, replacing any row with the same id.
