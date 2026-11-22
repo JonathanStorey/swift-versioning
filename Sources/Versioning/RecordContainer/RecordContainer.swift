@@ -15,8 +15,9 @@ public final class RecordContainer: @unchecked Sendable {
 
     // Opened with SQLITE_OPEN_FULLMUTEX, so SQLite serializes every call on it.
     let connection: OpaquePointer
-    // Serializes registering, and a read of a row with the write that follows it.
-    private let lock = NSLock()
+    // Serializes registering, a read of a row with the write that follows it, and a
+    // transaction with the saves inside it, which take the lock again.
+    private let lock = NSRecursiveLock()
     /// The registered record types, by record type name. Read and written while locked.
     var registrations: [String: RecordType] = [:]
 
@@ -45,6 +46,8 @@ public final class RecordContainer: @unchecked Sendable {
         }
         self.connection = connection
         self.url = url
+        // WAL lets a read run beside a write and makes each commit cheaper.
+        try execute("PRAGMA journal_mode = WAL")
         try execute(Self.createTable)
     }
 
@@ -73,6 +76,22 @@ extension RecordContainer {
         lock.lock()
         defer { lock.unlock() }
         return try body()
+    }
+
+    /// The result of `body`, run as one SQLite transaction: every write in it commits
+    /// together, or, when it throws, none does.
+    func transaction<T>(_ body: () throws(DatabaseError) -> T) throws(DatabaseError) -> T {
+        try locked { () throws(DatabaseError) -> T in
+            try execute("BEGIN IMMEDIATE")
+            do throws(DatabaseError) {
+                let result = try body()
+                try execute("COMMIT")
+                return result
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
     }
 
     /// Runs one or more SQL statements that return no rows.

@@ -459,4 +459,52 @@ private func noteContainer() -> RecordContainer {
         #expect(try container.send(deleted: id) == nil)
     }
 }
+
+@Suite struct RecordContainerBatchCloudKitTests {
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func savesManyRecordsAtOnce() throws {
+        let container = noteContainer()
+        let other = UUID()
+        let second = record(["id": other.uuidString as NSString, "title": "Second" as NSString], type: "Note", name: other.uuidString)
+        try container.save(their: [noteRecord("First"), second])
+        #expect(try container.row(id: id)?.base?["title"] == "First")
+        #expect(try container.row(id: other)?.base?["title"] == "Second")
+
+        try container.save(deleted: [second.recordID])
+        #expect(try container.row(id: other) == nil)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func confirmsManyUploadsAtOnce() throws {
+        let container = noteContainer()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        try container.save(sent: [try #require(try container.send(id: id))])
+        #expect(try container.row(id: id)?.status == .synced)
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func listsPendingSavesAndDeletes() throws {
+        let container = noteContainer()
+        let other = UUID()
+        try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        try container.save(their: record(["id": other.uuidString as NSString, "title": "Old" as NSString], type: "Note", name: other.uuidString))
+        try container.delete(our: Note(id: other, title: "Old"))
+
+        let pending = try container.pendingChanges()
+        #expect(pending.saves == [CKRecord.ID(recordName: id.uuidString, zoneID: zoneID)])
+        #expect(pending.deletes == [CKRecord.ID(recordName: other.uuidString, zoneID: zoneID)])
+    }
+
+    @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
+    @Test func skipsAShare() throws {
+        let container = noteContainer()
+        let share = CKShare(rootRecord: noteRecord("Hello"))
+        try container.save(their: share)
+        let pending = try container.pendingChanges()
+        #expect(pending.saves.isEmpty && pending.deletes.isEmpty)
+        if let shareID = UUID(uuidString: share.recordID.recordName) {
+            #expect(try container.row(id: shareID) == nil)
+        }
+    }
+}
 #endif

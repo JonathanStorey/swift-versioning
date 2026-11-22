@@ -10,10 +10,10 @@ extension RecordContainer {
     /// owner come from the record's zone. The decoded value merges into the row as ``save(their:id:zone:type:metadata:)``
     /// describes. A record whose type is not registered, or that the type cannot decode, is
     /// kept whole in `metadata` with the reason in `error`, so nothing is lost. A record whose
-    /// name is not a UUID was not saved by this package and is skipped. Throws only when the
-    /// database fails.
+    /// name is not a UUID was not saved by this package and is skipped, as is a `CKShare`.
+    /// Throws only when the database fails.
     func save(their record: CKRecord) throws(DatabaseError) {
-        guard let id = record.recordID.rowID else { return }
+        guard !(record is CKShare), let id = record.recordID.rowID else { return }
         let json: JSONRepresentation
         do {
             json = try self.json(of: record)
@@ -21,6 +21,50 @@ extension RecordContainer {
             return try save(unreadable: record, id: id, reason: error)
         }
         try save(their: json, id: id, zone: record.recordID.zone, type: record.recordType, metadata: record.systemFields)
+    }
+
+    /// Saves the server's version of each of `records`, as `save(their:)` does for one record,
+    /// in one transaction.
+    ///
+    /// ```swift
+    /// try container.save(their: changes.modifications.map(\.record))
+    /// ```
+    func save(their records: some Sequence<CKRecord>) throws(DatabaseError) {
+        try transaction { () throws(DatabaseError) in
+            for record in records { try save(their: record) }
+        }
+    }
+
+    /// Saves each of `records`, which this device sent and the server saved, as
+    /// `save(sent:)` does for one record, in one transaction.
+    func save(sent records: some Sequence<CKRecord>) throws(DatabaseError) {
+        try transaction { () throws(DatabaseError) in
+            for record in records { try save(sent: record) }
+        }
+    }
+
+    /// Saves that the server no longer has each record in `ids`, as
+    /// `save(deleted:)` does for one id, in one transaction.
+    func save(deleted ids: some Sequence<CKRecord.ID>) throws(DatabaseError) {
+        try transaction { () throws(DatabaseError) in
+            for id in ids { try save(deleted: id) }
+        }
+    }
+
+    /// The records waiting to upload, as saves and deletes, for telling a sync engine what
+    /// to send, as on launch after a change was saved but never handed to it.
+    ///
+    /// ```swift
+    /// let pending = try container.pendingChanges()
+    /// syncEngine.state.add(pendingRecordZoneChanges: pending.saves.map { .saveRecord($0) } + pending.deletes.map { .deleteRecord($0) })
+    /// ```
+    func pendingChanges() throws(DatabaseError) -> (saves: [CKRecord.ID], deletes: [CKRecord.ID]) {
+        var pending: (saves: [CKRecord.ID], deletes: [CKRecord.ID]) = ([], [])
+        for row in try pendingRows() {
+            let recordID = CKRecord.ID(recordName: row.id.uuidString, zoneID: row.zone.zoneID)
+            if row.isDeleted { pending.deletes.append(recordID) } else { pending.saves.append(recordID) }
+        }
+        return pending
     }
 
     /// The record to upload for the row `id`, or `nil` when it has nothing to upload.
