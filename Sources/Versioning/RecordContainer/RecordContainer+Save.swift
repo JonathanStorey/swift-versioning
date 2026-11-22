@@ -25,12 +25,29 @@ extension RecordContainer {
     ///
     /// A new id adds a row. An existing id replaces `ours`, clears `isDeleted` and `error`,
     /// and keeps `base`, `theirs`, `metadata`, the zone and the owner, in one statement.
-    func upsert<Record: Encodable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID == UUID {
-        let ours = try JSONEncoder().encode(JSONRepresentation(record))
-        try run("""
-            INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
-            """, record.id.uuidString, zone, owner, String(describing: Record.self), String(decoding: ours, as: UTF8.self))
+    func save<Record: Encodable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID == UUID {
+        let ours = try Self.text(JSONRepresentation(record))
+        try locked {
+            try run("""
+                INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
+                """, record.id.uuidString, zone, owner, Self.recordType(of: Record.self), ours)
+        }
+    }
+
+    /// Saves the server's version of the record `id`, with its system fields as `metadata`.
+    ///
+    /// A new record, or one with no local changes, takes `json` as its `base`. With local
+    /// changes waiting, `json` merges into `ours` first, by the registered type's own merge.
+    /// See ``Row/receive(_:merging:)``. Throws when `type` is not registered.
+    func save(their json: JSONRepresentation, id: UUID, zone: String, owner: String, type: String, metadata: Data?) throws {
+        let registered = try registeredType(named: type)
+        try locked {
+            var row = try row(id: id) ?? Row(id: id, zone: zone, owner: owner, type: type)
+            row.metadata = metadata
+            row.receive(json) { ours, theirs, base in try ours.merging(with: theirs, from: base, as: registered) }
+            try write(row)
+        }
     }
 
     /// The row for `id`, or `nil` when the container has none.
@@ -55,6 +72,20 @@ extension RecordContainer {
 }
 
 private extension RecordContainer {
+    /// `json` as the text the table stores.
+    static func text(_ json: JSONRepresentation) throws -> String {
+        String(decoding: try JSONEncoder().encode(json), as: UTF8.self)
+    }
+
+    /// Writes every column of `row`, replacing any row with the same id.
+    func write(_ row: Row) throws {
+        try run("""
+            INSERT OR REPLACE INTO record (id, zone, owner, type, metadata, base, ours, theirs, is_deleted, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, row.id.uuidString, row.zone, row.owner, row.type, row.metadata,
+            try row.base.map(Self.text), try row.ours.map(Self.text), try row.theirs.map(Self.text), row.isDeleted, row.error)
+    }
+
     /// Prepares `sql`, binds `values` in order, and steps through it, passing each result row to `body`.
     func run(_ sql: String, _ values: Any?..., each body: (OpaquePointer) throws -> Void = { _ in }) throws {
         var statement: OpaquePointer?
