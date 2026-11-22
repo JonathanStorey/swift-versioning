@@ -74,7 +74,10 @@ extension RecordContainer {
     ///
     /// The record starts from the row's system fields, so the server can tell which version
     /// it replaces, or, before the server first confirms it or when they cannot be read,
-    /// from a new record in the row's zone. `ours` is encoded into it as the registered type.
+    /// from a new record in the row's zone. `ours` is encoded into it as the registered type,
+    /// only the fields that differ from `base`, so CloudKit uploads just those, and an
+    /// unchanged asset is never sent again. A field `ours` no longer has is set to `nil`, so
+    /// the server clears it. A record with no `base` sends every field.
     /// A row that is synced, deleted, waiting to merge, or rejected sends nothing. A row that
     /// cannot be encoded sends nothing, with the reason in `error`. Throws only when the
     /// database fails.
@@ -89,7 +92,7 @@ extension RecordContainer {
             recordID: CKRecord.ID(recordName: id.uuidString, zoneID: row.zone.zoneID)
         )
         do {
-            try CKRecordEncoder().encode(ours, as: registeredType(named: row.type), to: record)
+            try CKRecordEncoder().encode(ours, as: registeredType(named: row.type), to: record, changedFrom: row.base)
             return record
         } catch {
             try update(id: id) { $0.error = "This device could not send its \(row.type): \(error)" }
@@ -216,8 +219,34 @@ private extension CKRecordDecoder {
 @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 private extension CKRecordEncoder {
     /// Encodes `json`, decoded as `type`, into `record`, generic so a registered metatype opens here.
-    func encode<T: Codable>(_ json: JSONRepresentation, as type: T.Type, to record: CKRecord) throws {
-        try encode(json.decode(type), to: record)
+    ///
+    /// With a `base`, only the top-level fields whose JSON differs from it are set, since a
+    /// record uploads exactly the keys set on it. A field set to `nil` is cleared on the server.
+    func encode<T: Codable>(_ json: JSONRepresentation, as type: T.Type, to record: CKRecord, changedFrom base: JSONRepresentation?) throws {
+        let value = try json.decode(type)
+        guard let base else { return try encode(value, to: record) }
+        let scratch = CKRecord(recordType: record.recordType, recordID: record.recordID)
+        try encode(value, to: scratch)
+        let encrypted = Set(Mirror(reflecting: value).children.compactMap { child -> String? in
+            guard let label = child.label, child.value is any EncryptedValue else { return nil }
+            return label.hasPrefix("_") ? String(label.dropFirst()) : label
+        })
+        for key in json.changedKeys(from: base) {
+            if encrypted.contains(key) {
+                record.encryptedValues[key] = scratch.encryptedValues[key]
+            } else {
+                record[key] = scratch[key]
+            }
+        }
+        if record.parent?.recordID != scratch.parent?.recordID { record.parent = scratch.parent }
+    }
+}
+
+private extension JSONRepresentation {
+    /// The top-level keys whose values differ from `base`'s, including a key only one has.
+    func changedKeys(from base: JSONRepresentation) -> Set<String> {
+        guard case .object(let pairs) = self, case .object(let basePairs) = base else { return [] }
+        return Set(pairs.map { $0.key } + basePairs.map { $0.key }).filter { self[$0] != base[$0] }
     }
 }
 
