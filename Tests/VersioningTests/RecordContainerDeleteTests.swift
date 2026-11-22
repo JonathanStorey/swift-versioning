@@ -52,6 +52,30 @@ private extension RecordContainer {
         #expect(try container.row(id: synced.id)?.status == .waitingToUpload)
     }
 
+    @Test func theEngineStateIsKeptUntilCleared() throws {
+        let container = RecordContainer()
+        #expect(container.engineStateData == nil)
+        container.engineStateData = Data([1])
+        container.engineStateData = Data([2])
+        #expect(container.engineStateData == Data([2]))
+
+        try container.clear(in: "Notes")
+        #expect(container.engineStateData == Data([2]), "Clearing a zone keeps the engine's state.")
+        try container.clear()
+        #expect(container.engineStateData == nil)
+
+        container.engineStateData = Data([3])
+        container.engineStateData = nil
+        #expect(container.engineStateData == nil)
+    }
+
+    @Test func aFileContainerKeepsTheEngineState() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try RecordContainer(url: url).engineStateData = Data([4])
+        #expect(try RecordContainer(url: url).engineStateData == Data([4]))
+    }
+
     @Test func aRecordNeverUploadedIsRemovedAtOnce() throws {
         let container = RecordContainer()
         let note = Note(title: "Draft")

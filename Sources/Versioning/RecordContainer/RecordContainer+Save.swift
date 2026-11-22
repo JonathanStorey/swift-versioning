@@ -18,6 +18,10 @@ extension RecordContainer {
             theirs TEXT,
             is_deleted INTEGER NOT NULL DEFAULT 0,
             error TEXT
+        );
+        CREATE TABLE IF NOT EXISTS engine_state (
+            id INTEGER PRIMARY KEY CHECK (id = 0),
+            data BLOB NOT NULL
         )
         """
 
@@ -114,11 +118,12 @@ extension RecordContainer {
         }
     }
 
-    /// Removes every row on this device, sending nothing, as when the iCloud account signs
-    /// out or changes. Unlike ``delete(id:)``, nothing is deleted on the server.
+    /// Removes every row on this device, and the engine's state, sending nothing, as when the
+    /// iCloud account signs out or changes. Unlike ``delete(id:)``, nothing is deleted on the server.
     func clear() throws(DatabaseError) {
         try locked { () throws(DatabaseError) in
             try run("DELETE FROM record")
+            try run("DELETE FROM engine_state")
             try? FileManager.default.removeItem(at: assets)
         }
     }
@@ -143,6 +148,26 @@ extension RecordContainer {
                     continue
                 }
                 try write(Row(id: id, zone: row.zone, type: row.type, ours: content))
+            }
+        }
+    }
+
+    /// The bytes of the sync engine's state, kept in the one row of the `engine_state` table,
+    /// or `nil` when none is saved. See `engineState`.
+    ///
+    /// Neither reading nor writing throws. A state that is lost, or not saved, only makes the
+    /// engine fetch changes again, and saving a version this device already has changes nothing.
+    var engineStateData: Data? {
+        get {
+            var data: Data?
+            try? run("SELECT data FROM engine_state WHERE id = 0") { (statement) throws(DatabaseError) in data = statement.blob(at: 0) }
+            return data
+        }
+        set {
+            if let newValue {
+                try? run("INSERT OR REPLACE INTO engine_state (id, data) VALUES (0, ?)", newValue)
+            } else {
+                try? run("DELETE FROM engine_state")
             }
         }
     }
