@@ -49,14 +49,16 @@ final class MergeContext: @unchecked Sendable {
     }
 
     /// The versions at `path` merged by `T`'s own rules, or `nil` when `T`
-    /// has none, both sides did not change it, or a side lacks it. `T`'s
+    /// has none, both sides did not change it, or a side lacks it. Both
+    /// sides making the same change to a `Mergeable` value still merges, so
+    /// two counters raised by one each add to two. `T`'s
     /// rules are its own merge if it is `Mergeable`, a merge by key for a
     /// dictionary, or a merge by id for an array or set of `Identifiable`
     /// elements. Where those rules conflict, the JSON merge stands, and
     /// without a favored side the conflict's paths are kept to throw from
     /// `decode(_:)`.
     func mergedValue<T: Decodable>(_ type: T.Type, at path: JSONRepresentation.Path) -> T? {
-        guard readsTypes, bothChanged(at: path) else { return nil }
+        guard readsTypes, bothChanged(at: path, evenAlike: T.self is any Mergeable.Type) else { return nil }
         let side = side
         let merge: (Any, Any, Any?) throws(MergeConflict) -> Any?
         if let mergeable = T.self as? any Mergeable.Type {
@@ -97,8 +99,11 @@ final class MergeContext: @unchecked Sendable {
         return bothChanged(at: path)
     }
 
-    private func bothChanged(at path: JSONRepresentation.Path) -> Bool {
-        guard let mine = ours[path], let other = theirs[path], !mine.isEquivalent(to: other) else { return false }
+    /// Whether both sides changed the value at `path`, differently, or, when
+    /// `evenAlike`, in the same way.
+    private func bothChanged(at path: JSONRepresentation.Path, evenAlike: Bool = false) -> Bool {
+        guard let mine = ours[path], let other = theirs[path] else { return false }
+        if mine.isEquivalent(to: other), !(evenAlike && base != nil) { return false }
         guard let base else { return true }
         guard let original = base[path] else { return true }
         return !mine.isEquivalent(to: original) && !other.isEquivalent(to: original)

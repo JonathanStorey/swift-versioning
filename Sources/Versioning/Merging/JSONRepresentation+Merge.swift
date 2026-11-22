@@ -41,6 +41,16 @@ extension JSONRepresentation {
         }
         if isEquivalent(to: theirs) { return self }
 
+        // An enum with associated values encodes as an object whose one key is its case.
+        // When the sides hold different cases, their payloads cannot mix, so it conflicts whole.
+        if case .object(let mine) = self, case .object(let yours) = theirs,
+           mine.count == 1, yours.count == 1, mine[0].key != yours[0].key {
+            if case .dictionary? = schema?.flattened {} else {
+                conflicts.append(path)
+                return self
+            }
+        }
+
         // Both sides changed it, differently.
         switch (schema?.flattened, self, theirs) {
         case (.optional(let wrapped)?, _, _) where self != .null && theirs != .null:

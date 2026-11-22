@@ -339,7 +339,7 @@ private func temporaryFolder() -> URL {
         container.register(Project.self)
         let ids = (0..<20).map { _ in UUID() }
         DispatchQueue.concurrentPerform(iterations: 400) { index in
-            let id = ids[index % ids.count]
+            let id = ids[(index / 4) % ids.count]
             switch index % 4 {
             case 0: try? container.save(our: Project(id: id, title: "Ours \(index)"), zone: "Projects")
             case 1: try? container.receive(Project(id: id, title: "Theirs \(index)"))
