@@ -103,7 +103,7 @@ private extension RecordContainer {
 
     @Test func theMergeStrategyCanKeepTheirs() throws {
         let container = RecordContainer.registered()
-        container.mergeStrategy = .favoring(.theirs)
+        container.favoring = .theirs
         try container.save(their: Note(id: id))
         try container.save(our: Note(id: id, title: "Ours", body: "Ours"), zone: "Notes")
         try container.save(their: Note(id: id, title: "Theirs"))

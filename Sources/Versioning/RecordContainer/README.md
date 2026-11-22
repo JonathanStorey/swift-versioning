@@ -185,16 +185,18 @@ The default merge encodes the three versions to JSON and merges them under the t
 
 ### Every merge settles
 
-If the type's own merge throws a conflict, `settled(_:with:from:)` runs the merge again with `DefaultMergeStrategy(favoring:)`, which keeps one side's value at each conflicting path and merges everything else normally. The side comes from `mergeStrategy`.
+If the type's own merge throws a conflict, `settled(_:with:from:)` runs the merge again with `DefaultMergeStrategy(favoring:)`. This is the same smart merge with one difference. Every `Mergeable` property, `Identifiable` array and dictionary still merges by its own rules, and only a value that nothing settles keeps one side. The side comes from `favoring`.
 
-| `mergeStrategy` | At each conflicting value |
+| `favoring` | At each conflicting value |
 | --- | --- |
-| `.favoring(.ours)` (the default) | This device's value is kept. |
-| `.favoring(.theirs)` | The server's value is kept. |
+| `.ours` (the default) | This device's value is kept. |
+| `.theirs` | The server's value is kept. |
 
-`.favoring(nil)` is not allowed. A conflict left standing would stop the row from syncing until some later version happened to settle it, and the user would have no way to see or fix it. The setter asserts, and if assertions are off it stores `.favoring(.ours)` instead.
+`favoring` is a `KeepMerge<JSONRepresentation>`, which has only those two cases, so the container cannot be told to leave a conflict standing. A standing conflict would stop the row from syncing until some later version happened to settle it, and the user would have no way to see or fix it.
 
-The favored side wins only at the exact paths that conflict. If one device changed a note's title and the other changed both its title and its body, `.favoring(.ours)` keeps this device's title and still takes the other device's body.
+`DefaultMergeStrategy` itself still accepts `favoring: nil`, and a type's default merge uses it. That is what makes the first attempt throw and name its paths, both for the container's two-step merge and for anyone calling `merging(with:)` directly.
+
+The favored side wins only at the exact paths that conflict. If one device changed a note's title and the other changed both its title and its body, `.ours` keeps this device's title and still takes the other device's body.
 
 ## Schema changes
 
@@ -257,14 +259,16 @@ Each version of a row that holds a file keeps its own copy, named `<key>-<UUID>`
 
 ### Copying in
 
-`storingAssets(_:in:id:)` copies each file into the row's folder and points the JSON field at the copy. It runs when a record is saved locally, when a merged result holds a file, and when a server record arrives (the server's download location is temporary, so the container keeps its own copy).
+`storingAssets(of:in:id:)` takes a record and its JSON, finds the record's files, copies each into the row's folder, and points its JSON field at the copy. It runs when a record is saved locally and when a merged result holds a file.
 
 - A file already in the row's folder is kept as it is.
 - A file with the same bytes as one the field already has in the folder points at the existing copy. Saving the same picture again is then no change, and nothing uploads.
 - A file that cannot be copied keeps its original URL.
 - On APFS a copy is a clone that shares the original's blocks, so copying is cheap.
 
-`assetFiles(of:in:)` finds which JSON keys hold files. It reads the file URL from each `@Asset` property and looks for the top-level JSON key whose string is that URL. Following the encoding instead of property names means a custom `CodingKeys` works. Assets are top-level only, because a nested value is stored as JSON, where a server record cannot hold a file.
+An incoming server record already lists its files by field, so it goes straight to the overload `storingAssets(_:in:id:)`, which takes that list. The server's download location is temporary, so the container keeps its own copy.
+
+The record's files are found by `assetFiles(of:)`, a private method on `JSONRepresentation`. It reads the file URL from each `@Asset` property and looks for the top-level JSON key whose string is that URL. Following the encoding instead of property names means a custom `CodingKeys` works. Assets are top-level only, because a nested value is stored as JSON, where a server record cannot hold a file.
 
 ### Portable paths
 
@@ -272,14 +276,14 @@ The app's sandbox can move, as iOS does when an app updates, so absolute file UR
 
 ### Cleaning up
 
-`removeUnusedAssets(of:)` deletes every file in a row's folder that none of `base`, `ours`, `theirs` and `sent` still points at, and removes the folder once it is empty. `removeAssets(id:)` deletes a row's whole folder.
+Two `sweepAssets` overloads do all the cleanup.
 
-Both run through `sweepAssets(id:of:)`, which decides when.
+- `sweepAssets(of:)` is for a row that was written. It deletes every file in the row's folder that none of `base`, `ours`, `theirs` and `sent` still points at, and removes the folder once it is empty.
+- `sweepAssets(id:)` is for a row that was removed. It deletes the row's whole folder.
 
-- Outside a transaction, cleanup happens at once: unused files for a row that still exists, the whole folder for a row that was removed.
-- Inside a transaction, the row's id is added to `assetsToSweep` and cleanup waits.
+Outside a transaction, either one cleans up at once. Inside a transaction, it adds the row's id to `assetsToSweep` and cleanup waits. `assetsToSweep` is private, so only `transaction(_:)` and the two overloads can touch it.
 
-When `transaction(_:)` ends, by commit or by rollback, it reads each row in `assetsToSweep` back from the database and cleans up against what is really there. A rolled-back write therefore never deletes a file the restored row still needs, and files copied in for rows that never landed are removed.
+When `transaction(_:)` ends, by commit or by rollback, it reads each row in `assetsToSweep` back from the database and cleans up against what is really there. A row that cannot be read keeps its files. A rolled-back write therefore never deletes a file the restored row still needs, and files copied in for rows that never landed are removed.
 
 ## Encryption
 
@@ -295,7 +299,7 @@ The connection is opened with `SQLITE_OPEN_FULLMUTEX`, so SQLite serializes ever
 
 `transaction(_:)` takes the same lock and runs its body between `BEGIN IMMEDIATE` and `COMMIT`, rolling back if the body throws. Because the lock is recursive, the saves inside a transaction take it again without deadlocking. Batches of incoming records, confirmations and deletions each run as one transaction, so a batch lands whole or not at all.
 
-`mergeStrategy`, `registrations` and `assetsToSweep` are only touched under the lock.
+`favoring`, `registrations` and `assetsToSweep` are only touched under the lock.
 
 ## Internal reference
 
@@ -309,10 +313,12 @@ Every function below is internal to the module unless marked otherwise.
 | `init(url: URL) throws(DatabaseError)` (public) | Opens or creates the database file at `url`. |
 | `var url: URL?` (public) | The database file, or `nil` in memory. |
 | `var assets: URL` | The folder holding every row's asset folder. |
-| `var mergeStrategy: DefaultMergeStrategy<JSONRepresentation>` | The side kept at conflicting values. Must favor a side. |
-| `var assetsToSweep: Set<UUID>?` | Rows whose asset cleanup waits for the current transaction, or `nil` outside one. |
+| `var favoring: KeepMerge<JSONRepresentation>` | The side kept at values the type's own merge cannot settle. |
+| `var assetsToSweep: Set<UUID>?` (private) | Rows whose asset cleanup waits for the current transaction, or `nil` outside one. |
 | `func locked<T, Failure>(_ body: () throws(Failure) -> T) throws(Failure) -> T` | Runs `body` under the container's recursive lock. |
 | `func transaction<T>(_ body: () throws(DatabaseError) -> T) throws(DatabaseError) -> T` | Runs `body` as one SQLite transaction, then sweeps assets. |
+| `func sweepAssets(of row: Row)` | Removes a written row's unused files, now or after the current transaction. |
+| `func sweepAssets(id: UUID)` | Removes a removed row's folder, now or after the current transaction. |
 | `func execute(_ sql: String) throws(DatabaseError)` | Runs SQL that returns no rows. |
 | `func run(_ sql: String, _ values: Any?..., each body:)` (private) | Prepares, binds and steps a statement, handing each result row to `body`. |
 
@@ -386,11 +392,9 @@ Every function below is internal to the module unless marked otherwise.
 | Declaration | What it does |
 | --- | --- |
 | `func assetFolder(id: UUID) -> URL` | A row's asset folder. |
-| `static func assetFiles(of record: Any, in json: JSONRepresentation) -> [String: URL]` | Each asset file by the JSON key that holds it. |
-| `func storingAssets(_ files: [String: URL], in json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Copies files into the row's folder, reusing identical ones. |
-| `func sweepAssets(id: UUID, of row: Row?)` | Cleans up now, or after the current transaction. |
-| `func removeUnusedAssets(of row: Row)` | Deletes files no version of the row uses. |
-| `func removeAssets(id: UUID)` | Deletes a row's whole folder. |
+| `func storingAssets(of record: Any, in json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Finds a record's asset files and copies them into the row's folder. |
+| `func storingAssets(_ files: [String: URL], in json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Copies files listed by field into the row's folder, reusing identical ones. |
+| `func JSONRepresentation.assetFiles(of record: Any) -> [String: URL]` (private) | Each asset file by the JSON key that holds it. |
 | `func portable(_ json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Rewrites the row's file URLs as relative names. |
 | `func resolved(_ json: JSONRepresentation, id: UUID) -> JSONRepresentation` | Turns relative names back into URLs. |
 | `var Mirror.properties: [(name: String, value: Any)]` | Each stored property, with a property wrapper under its own name. |

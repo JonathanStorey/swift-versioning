@@ -40,48 +40,10 @@ extension RecordContainer {
         return stored.isEmpty ? json : json.replacing(stored)
     }
 
-    /// Removes each file in the row's folder that none of `base`, `ours`, `theirs` and `sent`
-    /// points at, and the folder once nothing is left in it.
-    func removeUnusedAssets(of row: Row) {
-        let folder = assetFolder(id: row.id)
-        guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
-        let used = Set([row.base, row.ours, row.theirs, row.sent].compactMap { $0 }.flatMap(\.strings).compactMap { text in
-            text.hasPrefix(folder.absoluteString) ? URL(string: text)?.lastPathComponent : nil
-        })
-        let unused = files.filter { !used.contains($0.lastPathComponent) }
-        for file in unused { try? FileManager.default.removeItem(at: file) }
-        if unused.count == files.count { try? FileManager.default.removeItem(at: folder) }
-    }
-
-    /// Removes the files of the row `id` that `row` no longer uses, or, with no `row`, its
-    /// whole folder: now, or, inside a transaction, once it ends.
-    func sweepAssets(id: UUID, of row: Row?) {
-        if assetsToSweep != nil {
-            assetsToSweep?.insert(id)
-        } else if let row {
-            removeUnusedAssets(of: row)
-        } else {
-            removeAssets(id: id)
-        }
-    }
-
-    /// Removes the row's folder and every asset file in it.
-    func removeAssets(id: UUID) {
-        try? FileManager.default.removeItem(at: assetFolder(id: id))
-    }
-
-    /// The file of each `Asset` property of `record`, by the key `json`, its encoding, holds
-    /// it under, so a custom `CodingKeys` is followed. Only a top-level property, since a
-    /// nested value is stored as JSON, where a record cannot hold an asset.
-    static func assetFiles(of record: Any, in json: JSONRepresentation) -> [String: URL] {
-        let files = Mirror(reflecting: record).properties.compactMap { ($0.value as? any AnyAsset)?.projectedValue }
-        guard !files.isEmpty, case .object(let pairs) = json else { return [:] }
-        var found: [String: URL] = [:]
-        for pair in pairs {
-            guard case .string(let text) = pair.value, let file = files.first(where: { $0.absoluteString == text }) else { continue }
-            found[pair.key] = file
-        }
-        return found
+    /// `json`, the encoding of `record`, with the file of each `Asset` property of `record`
+    /// copied into the row's folder, as ``storingAssets(_:in:id:)`` does.
+    func storingAssets(of record: Any, in json: JSONRepresentation, id: UUID) -> JSONRepresentation {
+        storingAssets(json.assetFiles(of: record), in: json, id: id)
     }
 
     /// `json` with each top-level file in the row's folder named relative to the folder, as
@@ -116,6 +78,20 @@ extension Mirror {
 }
 
 private extension JSONRepresentation {
+    /// The file of each `Asset` property of `record`, by the key this value, its encoding,
+    /// holds it under, so a custom `CodingKeys` is followed. Only a top-level property, since
+    /// a nested value is stored as JSON, where a record cannot hold an asset.
+    func assetFiles(of record: Any) -> [String: URL] {
+        let files = Mirror(reflecting: record).properties.compactMap { ($0.value as? any AnyAsset)?.projectedValue }
+        guard !files.isEmpty, case .object(let pairs) = self else { return [:] }
+        var found: [String: URL] = [:]
+        for pair in pairs {
+            guard case .string(let text) = pair.value, let file = files.first(where: { $0.absoluteString == text }) else { continue }
+            found[pair.key] = file
+        }
+        return found
+    }
+
     /// This object with the value at each key of `values` replaced.
     func replacing(_ values: [String: JSONRepresentation]) -> JSONRepresentation {
         guard case .object(let pairs) = self else { return self }
@@ -129,15 +105,5 @@ private extension JSONRepresentation {
             guard case .string(let text) = pair.value, let mapped = transform(text) else { return pair }
             return (key: pair.key, value: .string(mapped))
         })
-    }
-
-    /// Every string in this value, at any depth.
-    var strings: [String] {
-        switch self {
-        case .string(let text): [text]
-        case .array(let elements): elements.flatMap(\.strings)
-        case .object(let pairs): pairs.flatMap { $0.value.strings }
-        default: []
-        }
     }
 }

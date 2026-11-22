@@ -180,7 +180,7 @@ private func temporaryFolder() -> URL {
 
     @Test func favoringTheirsKeepsTheServersNestedValue() throws {
         let container = try RecordContainer.synced(Project(id: id))
-        container.mergeStrategy = .favoring(.theirs)
+        container.favoring = .theirs
         var ours = Project(id: id)
         ours.address.city = "Ours"
         ours.title = "Ours"
