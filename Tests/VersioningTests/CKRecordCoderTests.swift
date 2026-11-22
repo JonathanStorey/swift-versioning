@@ -383,8 +383,9 @@ private func noteContainer() -> RecordContainer {
     @Test func aFailureWorthRetryingChangesNothing() throws {
         let container = noteContainer()
         try container.save(our: Note(id: id, title: "Draft"), zone: "Notes")
+        let sent = try #require(try container.send(id: id))
         let before = try container.row(id: id)
-        try container.save(failed: try #require(try container.send(id: id)), error: CKError(.networkFailure))
+        try container.save(failed: sent, error: CKError(.networkFailure))
         #expect(try container.row(id: id) == before)
     }
 
@@ -397,6 +398,7 @@ private func noteContainer() -> RecordContainer {
 
         let row = try #require(try container.row(id: id))
         #expect(row.metadata == nil)
+        #expect(row.base == nil, "The next send creates the record with every field.")
         #expect(row.status == .waitingToUpload)
     }
 

@@ -10,12 +10,22 @@ extension RecordContainer {
     /// `json` with the file at each of `files`, by field, copied into the row's folder under
     /// a new name, and the field pointing at the copy.
     ///
-    /// A file already in the folder is kept as it is. A file that cannot be copied keeps
-    /// its URL. On APFS the copy is a clone, which shares the original's blocks.
+    /// A file already in the folder is kept as it is. A file with the same bytes as one the
+    /// field already has in the folder points at that one instead, so saving the same bytes
+    /// again is no change and uploads nothing. A file that cannot be copied keeps its URL.
+    /// On APFS the copy is a clone, which shares the original's blocks.
     func storingAssets(_ files: [String: URL], in json: JSONRepresentation, id: UUID) -> JSONRepresentation {
         let folder = assetFolder(id: id)
+        let existing = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
         var stored: [String: JSONRepresentation] = [:]
         for (key, file) in files where !file.absoluteString.hasPrefix(folder.absoluteString) {
+            let same = existing.first { name in
+                name.hasPrefix("\(key)-") && FileManager.default.contentsEqual(atPath: folder.appendingPathComponent(name).path, andPath: file.path)
+            }
+            if let same {
+                stored[key] = .string(folder.appendingPathComponent(same).absoluteString)
+                continue
+            }
             // Named for its field, so a folder reads at a glance, and unique, so no version's
             // file is ever replaced.
             let copy = folder.appendingPathComponent("\(key)-\(UUID().uuidString)")
@@ -30,12 +40,12 @@ extension RecordContainer {
         return stored.isEmpty ? json : json.replacing(stored)
     }
 
-    /// Removes each file in the row's folder that none of `base`, `ours` and `theirs`
+    /// Removes each file in the row's folder that none of `base`, `ours`, `theirs` and `sent`
     /// points at, and the folder once nothing is left in it.
     func removeUnusedAssets(of row: Row) {
         let folder = assetFolder(id: row.id)
         guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return }
-        let used = Set([row.base, row.ours, row.theirs].compactMap { $0 }.flatMap(\.strings).compactMap { text in
+        let used = Set([row.base, row.ours, row.theirs, row.sent].compactMap { $0 }.flatMap(\.strings).compactMap { text in
             text.hasPrefix(folder.absoluteString) ? URL(string: text)?.lastPathComponent : nil
         })
         let unused = files.filter { !used.contains($0.lastPathComponent) }
@@ -52,12 +62,40 @@ extension RecordContainer {
     /// a nested value is stored as JSON, where a record cannot hold an asset.
     static func assetFiles(of record: Any) -> [String: URL] {
         var files: [String: URL] = [:]
-        for child in Mirror(reflecting: record).children {
-            guard let label = child.label, let file = (child.value as? any AnyAsset)?.projectedValue else { continue }
-            // A property wrapper's storage is the property's name after an underscore.
-            files[label.hasPrefix("_") ? String(label.dropFirst()) : label] = file
+        for property in Mirror(reflecting: record).properties {
+            if let file = (property.value as? any AnyAsset)?.projectedValue { files[property.name] = file }
         }
         return files
+    }
+
+    /// `json` with each top-level file in the row's folder named relative to the folder, as
+    /// the table stores it, so the database still finds its files when the app's container
+    /// moves, as it can on iOS when the app updates.
+    func portable(_ json: JSONRepresentation, id: UUID) -> JSONRepresentation {
+        let folder = assetFolder(id: id).absoluteString
+        return json.mappingTopLevelStrings { $0.hasPrefix(folder) ? Self.assetScheme + $0.dropFirst(folder.count) : nil }
+    }
+
+    /// `json`, as the table stores it, with each file named by ``portable(_:id:)`` pointing
+    /// into the row's folder again.
+    func resolved(_ json: JSONRepresentation, id: UUID) -> JSONRepresentation {
+        let folder = assetFolder(id: id)
+        return json.mappingTopLevelStrings { text in
+            text.hasPrefix(Self.assetScheme) ? folder.appendingPathComponent(String(text.dropFirst(Self.assetScheme.count))).absoluteString : nil
+        }
+    }
+
+    /// The prefix of a file name relative to its row's folder, as the table stores it.
+    private static let assetScheme = "versioning-asset:"
+}
+
+extension Mirror {
+    /// Each stored property's name and value, a property wrapper's under the property's own
+    /// name rather than its storage's, which adds an underscore.
+    var properties: [(name: String, value: Any)] {
+        children.compactMap { child in
+            child.label.map { (name: $0.hasPrefix("_") ? String($0.dropFirst()) : $0, value: child.value) }
+        }
     }
 }
 
@@ -66,6 +104,15 @@ private extension JSONRepresentation {
     func replacing(_ values: [String: JSONRepresentation]) -> JSONRepresentation {
         guard case .object(let pairs) = self else { return self }
         return .object(pairs.map { (key: $0.key, value: values[$0.key] ?? $0.value) })
+    }
+
+    /// This object with each top-level string that `transform` returns a value for replaced by it.
+    func mappingTopLevelStrings(_ transform: (String) -> String?) -> JSONRepresentation {
+        guard case .object(let pairs) = self else { return self }
+        return .object(pairs.map { pair in
+            guard case .string(let text) = pair.value, let mapped = transform(text) else { return pair }
+            return (key: pair.key, value: .string(mapped))
+        })
     }
 
     /// Every string in this value, at any depth.

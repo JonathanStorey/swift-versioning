@@ -16,6 +16,7 @@ extension RecordContainer {
             base TEXT,
             ours TEXT,
             theirs TEXT,
+            sent TEXT,
             is_deleted INTEGER NOT NULL DEFAULT 0,
             error TEXT
         );
@@ -37,10 +38,10 @@ extension RecordContainer {
     /// try container.save(our: page, id: \.slug, zone: "Pages")
     /// ```
     func save<Record: Encodable, ID: Encodable>(our record: Record, id: KeyPath<Record, ID>, zone: Zone) throws {
-        assert(zone != .public || !Mirror(reflecting: record).children.contains { $0.value is any EncryptedValue },
+        assert(zone != .public || !Mirror(reflecting: record).properties.contains { $0.value is any EncryptedValue },
                "The public database cannot store @Encrypted values, so \(Record.self) cannot be saved to Zone.public.")
         let id = try Self.recordID(for: record[keyPath: id], type: Self.recordType(of: Record.self))
-        let ours = try Self.text(storingAssets(Self.assetFiles(of: record), in: JSONRepresentation(record), id: id))
+        let ours = try Self.text(portable(storingAssets(Self.assetFiles(of: record), in: JSONRepresentation(record), id: id), id: id))
         try locked {
             try run("""
                 INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
@@ -215,17 +216,18 @@ extension RecordContainer {
     /// The row for `id`, or `nil` when the container has none.
     func row(id: UUID) throws(DatabaseError) -> Row? {
         var row: Row?
-        try run("SELECT zone, owner, type, metadata, base, ours, theirs, is_deleted, error FROM record WHERE id = ?", id.uuidString) { (statement) throws(DatabaseError) in
+        try run("SELECT zone, owner, type, metadata, base, ours, theirs, sent, is_deleted, error FROM record WHERE id = ?", id.uuidString) { (statement) throws(DatabaseError) in
             row = Row(
                 id: id,
                 zone: Zone(statement.text(at: 0) ?? "", owner: statement.text(at: 1) ?? ""),
                 type: statement.text(at: 2) ?? "",
                 metadata: statement.blob(at: 3),
-                base: try statement.json(at: 4),
-                ours: try statement.json(at: 5),
-                theirs: try statement.json(at: 6),
-                isDeleted: sqlite3_column_int(statement, 7) != 0,
-                error: statement.text(at: 8)
+                base: try statement.json(at: 4).map { resolved($0, id: id) },
+                ours: try statement.json(at: 5).map { resolved($0, id: id) },
+                theirs: try statement.json(at: 6).map { resolved($0, id: id) },
+                sent: try statement.json(at: 7).map { resolved($0, id: id) },
+                isDeleted: sqlite3_column_int(statement, 8) != 0,
+                error: statement.text(at: 9)
             )
         }
         return row
@@ -250,13 +252,14 @@ private extension RecordContainer {
 
     /// Writes every column of `row`, replacing any row with the same id.
     func write(_ row: Row) throws(DatabaseError) {
+        let text = { (json: JSONRepresentation?) throws(DatabaseError) -> String? in
+            try json.map { (json) throws(DatabaseError) in try Self.text(self.portable(json, id: row.id)) }
+        }
         try run("""
-            INSERT OR REPLACE INTO record (id, zone, owner, type, metadata, base, ours, theirs, is_deleted, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO record (id, zone, owner, type, metadata, base, ours, theirs, sent, is_deleted, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, row.id.uuidString, row.zone.name, row.zone.owner, row.type, row.metadata,
-            try row.base.map { (json) throws(DatabaseError) in try Self.text(json) },
-            try row.ours.map { (json) throws(DatabaseError) in try Self.text(json) },
-            try row.theirs.map { (json) throws(DatabaseError) in try Self.text(json) },
+            try text(row.base), try text(row.ours), try text(row.theirs), try text(row.sent),
             row.isDeleted, row.error)
         removeUnusedAssets(of: row)
     }
@@ -295,8 +298,10 @@ private extension OpaquePointer {
         sqlite3_column_text(self, column).map { String(cString: $0) }
     }
 
+    /// The bytes in `column`, empty for an empty blob, which SQLite returns as a null pointer.
     func blob(at column: Int32) -> Data? {
-        guard let bytes = sqlite3_column_blob(self, column) else { return nil }
+        guard sqlite3_column_type(self, column) != SQLITE_NULL else { return nil }
+        guard let bytes = sqlite3_column_blob(self, column) else { return Data() }
         return Data(bytes: bytes, count: Int(sqlite3_column_bytes(self, column)))
     }
 

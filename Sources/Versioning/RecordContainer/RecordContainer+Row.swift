@@ -17,6 +17,9 @@ extension RecordContainer {
         var ours: JSONRepresentation? = nil
         /// A newer server version waiting to merge into `ours`. Nothing uploads while it waits.
         var theirs: JSONRepresentation? = nil
+        /// The version last sent, kept until the server confirms it, because an upload holds
+        /// only the fields that changed, so the confirmed record cannot say what it holds.
+        var sent: JSONRepresentation? = nil
         /// A local delete the server has not confirmed.
         var isDeleted = false
         /// Why `theirs` could not merge, or, with no `theirs`, why the server rejected the
@@ -30,15 +33,13 @@ extension RecordContainer.Row {
         case synced
         case waitingToUpload
         case rejected(String)
-        case waitingToMerge
         case conflict(String)
     }
 
     /// Where the record is in syncing, worked out from the columns, never stored.
     var status: Status {
         switch (theirs, error) {
-        case (.some, let error?): .conflict(error)
-        case (.some, nil): .waitingToMerge
+        case (.some, let error): .conflict(error ?? "")
         case (nil, let error?): .rejected(error)
         case (nil, nil): ours != nil || isDeleted ? .waitingToUpload : .synced
         }
@@ -85,6 +86,7 @@ extension RecordContainer.Row {
     mutating func confirm(_ sent: JSONRepresentation) {
         base = sent
         if ours == sent { ours = .none }
+        self.sent = nil
         error = nil
     }
 }
