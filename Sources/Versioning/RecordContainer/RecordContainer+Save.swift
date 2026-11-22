@@ -41,11 +41,11 @@ extension RecordContainer {
     /// changes waiting, `json` merges into `ours` first, by the registered type's own merge.
     /// See ``Row/receive(_:merging:)``. Throws when `type` is not registered.
     func save(their json: JSONRepresentation, id: UUID, zone: String, owner: String, type: String, metadata: Data?) throws {
-        let registration = try registration(for: type)
+        let registered = try registeredType(named: type)
         try locked {
             var row = try row(id: id) ?? Row(id: id, zone: zone, owner: owner, type: type)
             row.metadata = metadata
-            row.receive(json, merging: registration.merge)
+            row.receive(json) { ours, theirs, base in try ours.merging(with: theirs, from: base, as: registered) }
             try write(row)
         }
     }
