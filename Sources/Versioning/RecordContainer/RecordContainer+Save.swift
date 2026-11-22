@@ -56,10 +56,12 @@ extension RecordContainer {
     /// See ``Row/receive(_:merging:)``. When `type` is not registered, a merge cannot run, so
     /// `json` waits in `theirs` with the reason in `error`.
     func save(their json: JSONRepresentation, id: UUID, zone: Zone, type: String, metadata: Data?) throws(DatabaseError) {
+        // Looked up before the row is locked, since the lookup takes the same lock.
+        let registered = Result { try registeredType(named: type) }
         try update(id: id, inserting: Row(id: id, zone: zone, type: type)) { row in
             row.metadata = metadata
             row.receive(json) { ours, theirs, base in
-                try ours.merging(with: theirs, from: base, as: registeredType(named: type))
+                try ours.merging(with: theirs, from: base, as: registered.get())
             }
         }
     }
