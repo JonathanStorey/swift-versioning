@@ -195,6 +195,25 @@ extension RecordContainer {
     }
 }
 
+@available(macOS 14, iOS 17, tvOS 17, watchOS 10, *)
+extension RecordContainer {
+    /// The sync engine's state, saved on every `stateUpdate` and read when the engine starts,
+    /// or `nil` when none is saved, so the engine fetches everything.
+    ///
+    /// ```swift
+    /// case .stateUpdate(let event):
+    ///     container.engineState = event.stateSerialization
+    ///
+    /// CKSyncEngine.Configuration(database: database, stateSerialization: container.engineState, delegate: self)
+    /// ```
+    ///
+    /// `clear()` removes it, since a new account starts from nothing.
+    var engineState: CKSyncEngine.State.Serialization? {
+        get { engineStateData.flatMap { try? JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: $0) } }
+        set { engineStateData = newValue.flatMap { try? JSONEncoder().encode($0) } }
+    }
+}
+
 @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 private extension RecordContainer {
     /// The JSON of `record` decoded as its registered type.
