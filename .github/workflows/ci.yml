@@ -12,13 +12,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: apt-get update && apt-get install -y libsqlite3-dev
-      - run: swift test
+      # A test process that dies can still exit 0, so the run must also report that it finished.
+      - run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/test.log"
+          grep -q "Test run with .* passed" "$RUNNER_TEMP/test.log"
+        shell: bash
 
   macos:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - run: swift test
+      # A test process that dies can still exit 0, so the run must also report that it finished.
+      - run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/test.log"
+          grep -q "Test run with .* passed" "$RUNNER_TEMP/test.log"
         env:
           JSON_SCHEMA_FIXTURES: ${{ runner.temp }}/json-schema-fixtures
       - name: Check schemas with an independent JSON Schema 2020-12 validator
