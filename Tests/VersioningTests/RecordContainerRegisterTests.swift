@@ -114,7 +114,8 @@ private extension RecordContainer {
 
     @Test func registeringStoresTheTypesSchema() throws {
         let container = RecordContainer.registered()
-        #expect(container.storedSchema(named: "Note") == (try JSONSchema(for: Note.self)))
+        let schema = try JSONSchema(for: Note.self)
+        #expect(container.storedSchema(named: "Note") == schema)
     }
 
     @Test func aNewPropertyMustBeOptionalToReadRecordsSavedBeforeIt() throws {
