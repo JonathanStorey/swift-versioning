@@ -18,6 +18,9 @@ public final class RecordContainer: @unchecked Sendable {
     // Serializes registering, a read of a row with the write that follows it, and a
     // transaction with the saves inside it, which take the lock again.
     private let lock = NSRecursiveLock()
+    /// The folder holding each row's asset files: beside the database file, or, in memory,
+    /// a new folder in the temporary directory, removed with the container.
+    let assets: URL
     /// The registered record types, by record type name. Read and written while locked.
     var registrations: [String: RecordType] = [:]
 
@@ -46,6 +49,8 @@ public final class RecordContainer: @unchecked Sendable {
         }
         self.connection = connection
         self.url = url
+        assets = url.map { $0.deletingLastPathComponent().appendingPathComponent($0.lastPathComponent + ".assets", isDirectory: true) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         // WAL lets a read run beside a write and makes each commit cheaper.
         try execute("PRAGMA journal_mode = WAL")
         try execute(Self.createTable)
@@ -53,6 +58,7 @@ public final class RecordContainer: @unchecked Sendable {
 
     deinit {
         sqlite3_close_v2(connection)
+        if url == nil { try? FileManager.default.removeItem(at: assets) }
     }
 }
 

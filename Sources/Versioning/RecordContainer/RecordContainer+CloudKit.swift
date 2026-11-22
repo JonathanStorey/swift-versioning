@@ -11,6 +11,7 @@ extension RecordContainer {
     /// describes. A record whose type is not registered, or that the type cannot decode, is
     /// kept whole in `metadata` with the reason in `error`, so nothing is lost. A record whose
     /// name is not a UUID was not saved by this package and is skipped, as is a `CKShare`.
+    /// Each asset's file is copied into the container, since the sync engine removes it.
     /// Throws only when the database fails.
     func save(their record: CKRecord) throws(DatabaseError) {
         guard !(record is CKShare), let id = record.recordID.rowID else { return }
@@ -20,7 +21,9 @@ extension RecordContainer {
         } catch {
             return try save(unreadable: record, id: id, reason: error)
         }
-        try save(their: json, id: id, zone: record.recordID.zone, type: record.recordType, metadata: record.systemFields)
+        // The sync engine removes an asset's file after the event, so the row keeps a copy.
+        let stored = storingAssets(record.assetFiles, in: json, id: id)
+        try save(their: stored, id: id, zone: record.recordID.zone, type: record.recordType, metadata: record.systemFields)
     }
 
     /// Saves the server's version of each of `records`, as `save(their:)` does for one record,
@@ -107,6 +110,7 @@ extension RecordContainer {
         } catch {
             return try save(unreadable: record, id: id, reason: error)
         }
+        // Its assets are the container's own files, which `send` uploaded, so nothing is copied.
         try update(id: id) { row in
             row.metadata = record.systemFields
             row.confirm(json)
@@ -254,6 +258,15 @@ private extension CKRecord {
         unarchiver.requiresSecureCoding = true
         defer { unarchiver.finishDecoding() }
         self.init(coder: unarchiver)
+    }
+
+    /// The file of each asset field, by field.
+    var assetFiles: [String: URL] {
+        var files: [String: URL] = [:]
+        for key in allKeys() {
+            if let file = (object(forKey: key) as? CKAsset)?.fileURL { files[key] = file }
+        }
+        return files
     }
 
     /// The whole record archived, its values with its system fields.
