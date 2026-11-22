@@ -559,6 +559,21 @@ The record type must match, every required field must be present with the
 field's CloudKit type, encrypted fields must be in `encryptedValues`, and an
 enum field must hold one of its cases.
 
+## RecordContainer
+
+`RecordContainer` is the database that holds records, a SQLite connection
+and nothing more. Without a location it lives in memory, which suits tests
+and previews. With a URL it is stored in that file.
+
+```swift
+let preview = RecordContainer()                      // in memory
+let container = try RecordContainer(url: storeURL)   // a file, created if needed
+```
+
+Opening a file throws a `DatabaseError` with SQLite's result code and
+message. On Linux, install SQLite's headers first
+(`apt-get install libsqlite3-dev`).
+
 ## Requirements
 
 - Swift 6.0 or later (Xcode 16+)
