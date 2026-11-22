@@ -7,11 +7,14 @@ extension RecordContainer {
     /// Registers `type`, so its records can merge on arrival by the type's own merge,
     /// ``DefaultMergeStrategy`` unless the type implements another.
     ///
+    /// A plain struct needs no `Identifiable` conformance. Its id is chosen where it is
+    /// saved, the way `List(_:id:)` takes any data.
+    ///
     /// ```swift
     /// let container = RecordContainer()
     /// container.register(Note.self)
     /// ```
-    func register<Record: Codable & Identifiable & Mergeable>(_ type: Record.Type) {
+    func register<Record: Codable & Mergeable>(_ type: Record.Type) {
         locked { registrations[Self.recordType(of: type)] = type }
     }
 
@@ -28,17 +31,17 @@ extension RecordContainer {
         String(describing: type)
     }
 
-    /// The row's id and the record's name for `record`: its `UUID` id itself, or, for any
-    /// other id, a stable hash of the record type and the id's JSON, as in `"Note|\"intro\""`.
+    /// The row's id and the record's name for the id `id` of a record of type `type`: a
+    /// `UUID` id itself, or, for any other id, a stable hash of the record type and the
+    /// id's JSON, as in `"Page|\"intro\""`.
     ///
     /// The same id always names the same record, so two devices that create it apart
     /// save one record. The type is part of the hash because a record name is unique in
     /// its zone across every type. A `UUID` id is kept as it is so a reference to the
     /// record can be read back as the id.
-    static func recordID<Record: Identifiable>(of record: Record) throws -> UUID where Record.ID: Encodable {
-        if let id = record.id as? UUID { return id }
-        let id = try JSONRepresentation(record.id)
-        return UUID(stableHashOf: recordType(of: Record.self) + "|" + id.description)
+    static func recordID(for id: any Encodable, type: String) throws -> UUID {
+        if let id = id as? UUID { return id }
+        return UUID(stableHashOf: type + "|" + (try JSONRepresentation(id)).description)
     }
 }
 

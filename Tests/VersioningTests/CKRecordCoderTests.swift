@@ -68,8 +68,8 @@ private struct Note: Codable, Identifiable, Mergeable {
     var title: String
 }
 
-private struct Page: Codable, Identifiable, Mergeable {
-    var id: String
+private struct Page: Codable, Mergeable {
+    var slug: String
     var title: String
 }
 
@@ -227,11 +227,11 @@ private func json(_ value: some Encodable) -> Data {
 @Suite struct RecordContainerCloudKitTests {
     @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
     @Test func savesARecordNamedByAHashOfItsID() throws {
-        let page = Page(id: "intro", title: "Hello")
-        let name = try RecordContainer.recordID(of: page)
+        let page = Page(slug: "intro", title: "Hello")
         let container = RecordContainer()
         container.register(Page.self)
-        try container.save(their: record(["id": "intro" as NSString, "title": "Hello" as NSString], type: "Page", name: name.uuidString))
+        let name = try RecordContainer.recordID(for: page.slug, type: "Page")
+        try container.save(their: record(["slug": "intro" as NSString, "title": "Hello" as NSString], type: "Page", name: name.uuidString))
 
         let row = try #require(try container.row(id: name))
         #expect(row.base == (try? JSONRepresentation(page)))
