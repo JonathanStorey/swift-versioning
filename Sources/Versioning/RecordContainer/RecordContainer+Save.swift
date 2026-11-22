@@ -63,7 +63,7 @@ extension RecordContainer {
         try update(id: id, inserting: Row(id: id, zone: zone, type: type)) { row in
             row.metadata = metadata
             row.receive(json) { ours, theirs, base in
-                try ours.merging(with: theirs, from: base, as: registered.get())
+                try merged(ours, with: theirs, from: base, as: registered.get(), id: id)
             }
         }
     }

@@ -45,12 +45,13 @@ extension RecordContainer {
     }
 }
 
-extension JSONRepresentation {
-    /// This version merged with `theirs`, from `base` when there is one, by `type`'s own merge.
-    func merging<Record: Codable & Mergeable>(with theirs: JSONRepresentation, from base: JSONRepresentation?, as type: Record.Type) throws -> JSONRepresentation {
-        let ours = try decode(Record.self)
+extension RecordContainer {
+    /// `ours` merged with `theirs`, from `base` when there is one, by `type`'s own merge,
+    /// with any file the merge wrote, as a merged `@Asset`, copied into the row `id`'s folder.
+    func merged<Record: Codable & Mergeable>(_ ours: JSONRepresentation, with theirs: JSONRepresentation, from base: JSONRepresentation?, as type: Record.Type, id: UUID) throws -> JSONRepresentation {
+        let mine = try ours.decode(Record.self)
         let other = try theirs.decode(Record.self)
-        guard let base else { return try JSONRepresentation(ours.merging(with: other)) }
-        return try JSONRepresentation(ours.merging(with: other, from: base.decode(Record.self)))
+        let merged = try base.map { try mine.merging(with: other, from: $0.decode(Record.self)) } ?? mine.merging(with: other)
+        return storingAssets(Self.assetFiles(of: merged), in: try JSONRepresentation(merged), id: id)
     }
 }

@@ -197,7 +197,7 @@ private extension FieldEncoder {
         case let date as Date: return date as NSDate
         case let data as Data: return data as NSData
         case let url as URL: return url.absoluteString as NSString
-        case let asset as Asset: return asset.projectedValue.map { CKAsset(fileURL: $0) }
+        case let asset as any AnyAsset: return asset.projectedValue.map { CKAsset(fileURL: $0) }
         case let location as Location: return location.clLocation
         case let reference as RecordRepresentation.Reference: return reference.ckReference(in: owner)
         default:
