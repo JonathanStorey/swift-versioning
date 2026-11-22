@@ -68,7 +68,8 @@ private extension RecordContainer {
         try container.save(deleted: note.id)
 
         let row = try #require(try container.row(id: note.id))
-        #expect(row == RecordContainer.Row(id: note.id, zone: "Notes", type: "Note", ours: try JSONRepresentation(edited)))
+        let ours = try JSONRepresentation(edited)
+        #expect(row == RecordContainer.Row(id: note.id, zone: "Notes", type: "Note", ours: ours))
         #expect(row.status == .waitingToUpload)
     }
 }
