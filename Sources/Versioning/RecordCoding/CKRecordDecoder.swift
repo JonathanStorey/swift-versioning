@@ -9,9 +9,9 @@ import CoreLocation
 /// let note = try CKRecordDecoder().decode(Note.self, from: record)
 /// ```
 ///
-/// The key `"id"` reads the record's name, so a `UUID` id decodes from it. Every other key
-/// reads the field of that name, or, when the record has none, the encrypted field, so
-/// `@Encrypted` needs nothing more. Each type is read from the CloudKit value that stores it:
+/// Each key reads the field of that name, or, when the record has none, the encrypted
+/// field, so `@Encrypted` needs nothing more. An `id` is an ordinary field, because the
+/// record's name may be a hash of it. Each type is read from the CloudKit value that stores it:
 ///
 /// - `String`, numbers, `Bool` (as 0 or 1), `Date` and `Data` from the value itself.
 /// - `URL` from a string, or from a `CKAsset`'s file, which is how `@Asset` reads.
@@ -125,14 +125,14 @@ private extension FieldDecoder {
 
 // MARK: - Containers
 
-/// The record's fields, with `"id"` read from the record's name.
+/// The record's fields, plain and encrypted.
 @available(macOS 12, iOS 15, tvOS 15, watchOS 8, *)
 private struct FieldContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
     let record: CKRecord
     let codingPath: [any CodingKey]
 
     var allKeys: [Key] {
-        var keys = ["id"] + record.allKeys()
+        var keys = record.allKeys()
         keys += record.encryptedValues.allKeys().filter { !keys.contains($0) }
         return keys.compactMap(Key.init(stringValue:))
     }
@@ -178,7 +178,6 @@ private struct FieldContainer<Key: CodingKey>: KeyedDecodingContainerProtocol {
 private extension FieldContainer {
     func value(for key: Key) -> Any? {
         let name = key.stringValue
-        if name == "id" { return record.recordID.recordName }
         let value: CKRecordValue? = record[name] ?? record.encryptedValues[name]
         return value
     }

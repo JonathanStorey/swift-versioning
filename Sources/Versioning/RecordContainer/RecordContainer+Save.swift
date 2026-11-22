@@ -23,15 +23,16 @@ extension RecordContainer {
 
     /// Saves `record` as this device's version: `ours`, waiting to upload.
     ///
-    /// A new id adds a row. An existing id replaces `ours`, clears `isDeleted` and `error`,
+    /// The row's id is ``recordID(of:)``. A new id adds a row. An existing id replaces `ours`, clears `isDeleted` and `error`,
     /// and keeps `base`, `theirs`, `metadata`, the zone and the owner, in one statement.
-    func save<Record: Encodable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID == UUID {
+    func save<Record: Encodable & Identifiable>(our record: Record, zone: String, owner: String = "__defaultOwner__") throws where Record.ID: Encodable {
+        let id = try Self.recordID(of: record)
         let ours = try Self.text(JSONRepresentation(record))
         try locked {
             try run("""
                 INSERT INTO record (id, zone, owner, type, ours) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET type = excluded.type, ours = excluded.ours, is_deleted = 0, error = NULL
-                """, record.id.uuidString, zone, owner, Self.recordType(of: Record.self), ours)
+                """, id.uuidString, zone, owner, Self.recordType(of: Record.self), ours)
         }
     }
 
