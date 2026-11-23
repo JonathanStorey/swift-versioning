@@ -12,6 +12,10 @@ private enum Mood: String, Codable, CaseIterable {
     case calm, busy
 }
 
+private enum Only: String, Codable, CaseIterable {
+    case one
+}
+
 /// Validates its text, so it rejects a unique placeholder.
 private struct Slug: Codable {
     var text: String
@@ -36,10 +40,11 @@ private struct Note: Codable {
     var stops: [Address]
     var tags: [String]
     var mood: Mood
+    var only: Only
     var slug: Slug
 
     enum CodingKeys: String, CodingKey {
-        case id, rank, small, score, created, isPinned, address, stops, tags, mood, slug
+        case id, rank, small, score, created, isPinned, address, stops, tags, mood, only, slug
         case title = "heading"
     }
 }
@@ -90,10 +95,15 @@ private struct Note: Codable {
         #expect(flag { $0.stops.first?.isHome == true } == ["stops", 0, "isHome"])
     }
 
-    @Test func eachFlagSetsOnlyItsOwnBool() {
-        #expect(recorded.flags.count == 3)
+    @Test func anEnumFindsItsPathThroughItsFlag() {
+        #expect(flag { $0.mood == .busy } == ["mood"], "Its copy holds the second case.")
+        #expect(recorded.flags.allSatisfy { $0.value.only == .one }, "A single case cannot change, so it has no flag.")
+    }
+
+    @Test func eachFlagChangesOnlyItsOwnValue() {
+        #expect(recorded.flags.count == 4)
         for copy in recorded.flags.map(\.value) {
-            let set = [copy.isPinned, copy.address.isHome, copy.stops.first?.isHome == true].filter { $0 }
+            let set = [copy.isPinned, copy.address.isHome, copy.stops.first?.isHome == true, copy.mood == .busy].filter { $0 }
             #expect(set.count == 1)
         }
     }

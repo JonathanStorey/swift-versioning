@@ -53,10 +53,11 @@ extension JSONSchema {
     ///   unique, and `scalars` holds its path by its JSON. An array's element
     ///   is at index 0, so the path's `description` reads like `$.stops[0].city`.
     ///   A fixed-width integer too narrow for its unique number is not listed.
-    /// - A `Bool` has too few values to be unique, so every `Bool` in `value`
-    ///   is `false`. Instead, `flags` holds a copy for each `Bool` in which only
-    ///   that `Bool` is `true`, with its path. A key path that reads `true` on
-    ///   a copy finds that copy's path.
+    /// - A `Bool` or a `CaseIterable` enum has too few values to be unique, so
+    ///   every `Bool` in `value` is `false` and every enum its first case.
+    ///   Instead, `flags` holds a copy for each in which only it changes, to
+    ///   `true` or to the second case, with its path. A key path that reads a
+    ///   different value on a copy than on `value` finds that copy's path.
     /// - A value that rejects its unique placeholder, such as a raw-value enum
     ///   or a type that validates its text, is decoded again with the plain
     ///   placeholders `init(for:)` uses, so nothing inside it is listed.
@@ -99,9 +100,9 @@ private final class SchemaRecorder: Decoder {
         var uniqueCount = 0
         /// The path of each unique scalar, by its JSON.
         var scalars: [JSONRepresentation: JSONRepresentation.Path] = [:]
-        /// The path of each `Bool`, in the order they are decoded.
+        /// The path of each `Bool` and enum with more than one case, in the order they are decoded.
         var flags: [JSONRepresentation.Path] = []
-        /// The path of the one `Bool` decoded as `true`.
+        /// The path of the one `Bool` decoded as `true`, or enum decoded as its second case.
         var flipped: JSONRepresentation.Path?
     }
 
@@ -193,10 +194,13 @@ extension SchemaRecorder {
                 // Every failure is a `DecodingError`, as with `JSONDecoder`.
                 throw error as? DecodingError ?? .dataCorrupted(.init(codingPath: codingPath, debugDescription: "\(T.self) threw an error while being recorded.", underlyingError: error))
             }
-            guard let first = firstCase(of: type) else {
+            guard let cases = cases(of: type), let first = cases.first else {
                 throw unsupported("\(T.self) rejected the recorder's placeholder value (an empty string, zero or false). A raw-value enum can conform to CaseIterable to supply a real case. Other types that validate their decoded value cannot be recorded.")
             }
-            return first
+            // Like a `Bool`, an enum's case is told apart by a copy in which only it changes.
+            guard cases.count > 1 else { return first }
+            if !context.flags.contains(path) { context.flags.append(path) }
+            return path == context.flipped ? cases[1] : first
         }
     }
 
@@ -230,7 +234,6 @@ extension SchemaRecorder {
             throw unsupported("The value was decoded as more than one kind.")
         }
         guard context.usesUniqueScalars else { return placeholder }
-        let path = JSONRepresentation.Path(codingPath.map { $0 as? JSONRepresentation.Path.Segment ?? .key($0.stringValue) })
         if placeholder is Bool {
             if !context.flags.contains(path) { context.flags.append(path) }
             return (path == context.flipped) as? T ?? placeholder
@@ -239,6 +242,11 @@ extension SchemaRecorder {
               let json = try? JSONRepresentation(encodable) else { return placeholder }
         context.scalars[json] = path
         return unique
+    }
+
+    /// This value's coding path as a ``JSONRepresentation/Path``.
+    var path: JSONRepresentation.Path {
+        JSONRepresentation.Path(codingPath.map { $0 as? JSONRepresentation.Path.Segment ?? .key($0.stringValue) })
     }
 
     /// A value of `placeholder`'s type made from the next unique number, or `nil` for a type
@@ -385,13 +393,14 @@ private extension JSONSchema {
     }
 }
 
-private func firstCase<T>(of type: T.Type) -> T? {
+/// The first two cases of a `CaseIterable` type, or `nil` for any other type.
+private func cases<T>(of type: T.Type) -> [T]? {
     guard let caseIterable = type as? any CaseIterable.Type else { return nil }
-    return firstCase(in: caseIterable) as? T
+    return cases(in: caseIterable) as? [T]
 }
 
-private func firstCase<C: CaseIterable>(in type: C.Type) -> C? {
-    type.allCases.first
+private func cases<C: CaseIterable>(in type: C.Type) -> [C] {
+    Array(type.allCases.prefix(2))
 }
 
 private func rawValues<T>(of type: T.Type) -> [Any]? {
