@@ -5,6 +5,7 @@ import Testing
 private struct Address: Codable {
     var city: String
     var zip: Int?
+    var isHome: Bool
 }
 
 private enum Mood: String, Codable, CaseIterable {
@@ -77,8 +78,24 @@ private struct Note: Codable {
         #expect(Set(values).count == values.count)
     }
 
-    @Test func aBoolIsNotListed() throws {
+    private func flag(_ isSet: (Note) -> Bool) -> JSONRepresentation.Path? {
+        recorded.flags.first { isSet($0.value) }?.path
+    }
+
+    @Test func aBoolIsNotAScalarButFindsItsPathThroughItsFlag() throws {
         #expect(try path(recorded.value.isPinned) == nil)
+        #expect(recorded.value.isPinned == false && recorded.value.address.isHome == false)
+        #expect(flag(\.isPinned) == ["isPinned"])
+        #expect(flag(\.address.isHome) == ["address", "isHome"])
+        #expect(flag { $0.stops.first?.isHome == true } == ["stops", 0, "isHome"])
+    }
+
+    @Test func eachFlagSetsOnlyItsOwnBool() {
+        #expect(recorded.flags.count == 3)
+        for copy in recorded.flags.map(\.value) {
+            let set = [copy.isPinned, copy.address.isHome, copy.stops.first?.isHome == true].filter { $0 }
+            #expect(set.count == 1)
+        }
     }
 
     @Test func aTypeThatRejectsItsPlaceholderGetsThePlainOne() throws {
