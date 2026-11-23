@@ -37,15 +37,32 @@ extension JSONSchema {
     }
 
     /// Decodes `type` as `init(for:)` does and returns the placeholder value,
-    /// with the coding path of each ``Markable`` value in it, by its marker.
+    /// with the coding path of each value in it that can be told apart.
     ///
-    /// Each ``Markable`` value is given its own marker, so reading a key path
-    /// on the placeholder and looking up its marker finds the coding key the
-    /// property is decoded from, without runtime names.
-    public static func placeholder<T: Decodable>(for type: T.Type) throws -> (value: T, markers: [UUID: [String]]) {
+    /// Reading a key path on the placeholder and looking up what it returns
+    /// finds the coding path the property is decoded from, without runtime
+    /// names, so custom `CodingKeys` are respected:
+    ///
+    /// ```swift
+    /// let recorded = try JSONSchema.placeholder(for: Note.self)
+    /// recorded.scalars[try JSONRepresentation(recorded.value.address.city)]   // ["address", "city"]
+    /// ```
+    ///
+    /// - Each `String`, number, `Date`, `Decimal`, `UUID`, `URL` and `Data` is
+    ///   unique, and `scalars` holds its path by its JSON. An array's element
+    ///   is at index 0, so the path's `description` reads like `$.stops[0].city`. A `Bool` has
+    ///   too few values to be unique, so it is not listed, and neither is a
+    ///   fixed-width integer too narrow for its unique number.
+    /// - A value that rejects its unique placeholder, such as a raw-value enum
+    ///   or a type that validates its text, is decoded again with the plain
+    ///   placeholders `init(for:)` uses, so nothing inside it is listed.
+    /// - Each ``Markable`` value is given its own marker, and `markers` holds
+    ///   its coding path by its marker.
+    public static func placeholder<T: Decodable>(for type: T.Type) throws -> (value: T, markers: [UUID: [String]], scalars: [JSONRepresentation: JSONRepresentation.Path]) {
         let context = SchemaRecorder.Context()
+        context.usesUniqueScalars = true
         let value = try SchemaRecorder(codingPath: [], context: context).decode(type)
-        return (value, context.markers)
+        return (value, context.markers, context.scalars)
     }
 
     /// A value that ``placeholder(for:)`` gives a unique marker.
@@ -67,6 +84,12 @@ private final class SchemaRecorder: Decoder {
         /// The coding path of each marker handed to a ``JSONSchema/Markable``
         /// value, so a key path read from the placeholder finds its coding path.
         var markers: [UUID: [String]] = [:]
+        /// Whether each scalar gets a unique placeholder, for ``JSONSchema/placeholder(for:)``.
+        var usesUniqueScalars = false
+        /// The last number handed out for a unique scalar.
+        var uniqueCount = 0
+        /// The path of each unique scalar, by its JSON.
+        var scalars: [JSONRepresentation: JSONRepresentation.Path] = [:]
     }
 
     enum Kind {
@@ -126,18 +149,12 @@ extension SchemaRecorder {
 
         let value: T
         do {
-            value = try T(from: self)
-        } catch {
-            // A raw-value enum records its raw type, then rejects the
-            // placeholder. A CaseIterable enum supplies a real case instead.
-            guard case .scalar = kind else {
-                // Every failure is a `DecodingError`, as with `JSONDecoder`.
-                throw error as? DecodingError ?? .dataCorrupted(.init(codingPath: codingPath, debugDescription: "\(T.self) threw an error while being recorded.", underlyingError: error))
-            }
-            guard let first = firstCase(of: type) else {
-                throw unsupported("\(T.self) rejected the recorder's placeholder value (an empty string, zero or false). A raw-value enum can conform to CaseIterable to supply a real case. Other types that validate their decoded value cannot be recorded.")
-            }
-            value = first
+            value = try construct(type)
+        } catch where context.usesUniqueScalars {
+            // A type that rejects a unique placeholder gets the plain ones.
+            context.usesUniqueScalars = false
+            defer { context.usesUniqueScalars = true }
+            value = try construct(type)
         }
         recordCases(of: type)
         if case .array = kind, type is any SetAlgebra.Type {
@@ -150,6 +167,24 @@ extension SchemaRecorder {
             return markable.marked(marker) as? T ?? value
         }
         return value
+    }
+
+    /// Runs `type`'s own `init(from:)` against this recorder.
+    func construct<T: Decodable>(_ type: T.Type) throws -> T {
+        do {
+            return try T(from: self)
+        } catch {
+            // A raw-value enum records its raw type, then rejects the
+            // placeholder. A CaseIterable enum supplies a real case instead.
+            guard case .scalar = kind else {
+                // Every failure is a `DecodingError`, as with `JSONDecoder`.
+                throw error as? DecodingError ?? .dataCorrupted(.init(codingPath: codingPath, debugDescription: "\(T.self) threw an error while being recorded.", underlyingError: error))
+            }
+            guard let first = firstCase(of: type) else {
+                throw unsupported("\(T.self) rejected the recorder's placeholder value (an empty string, zero or false). A raw-value enum can conform to CaseIterable to supply a real case. Other types that validate their decoded value cannot be recorded.")
+            }
+            return first
+        }
     }
 
     /// Narrows a recorded `.string()` or `.integer()` to the raw values of a
@@ -181,7 +216,30 @@ extension SchemaRecorder {
         default:
             throw unsupported("The value was decoded as more than one kind.")
         }
-        return placeholder
+        guard context.usesUniqueScalars, let unique = unique(like: placeholder),
+              let encodable = unique as? any Encodable, let json = try? JSONRepresentation(encodable) else { return placeholder }
+        context.scalars[json] = JSONRepresentation.Path(codingPath.map { $0 as? JSONRepresentation.Path.Segment ?? .key($0.stringValue) })
+        return unique
+    }
+
+    /// A value of `placeholder`'s type made from the next unique number, or `nil` for a type
+    /// with too few values.
+    func unique<T>(like placeholder: T) -> T? {
+        context.uniqueCount += 1
+        let number = context.uniqueCount
+        let value: Any? = switch placeholder {
+        case is String: String(number)
+        case is Double: Double(number)
+        case is Float: Float(number)
+        case let integer as any FixedWidthInteger: integer.exactly(number)
+        case is Date: Date(timeIntervalSinceReferenceDate: Double(number))
+        case is Decimal: Decimal(number)
+        case is UUID: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012X", number))
+        case is URL: URL(fileURLWithPath: "/\(number)")
+        case is Data: Data(String(number).utf8)
+        default: nil
+        }
+        return value as? T
     }
 
     func child(for key: any CodingKey) throws -> SchemaRecorder {
@@ -480,5 +538,12 @@ private extension JSONSchema.Markable {
         var copy = self
         copy.mark(marker)
         return copy
+    }
+}
+
+private extension FixedWidthInteger {
+    /// `number` as this type, or `nil` when it does not fit.
+    func exactly(_ number: Int) -> Self? {
+        Self(exactly: number)
     }
 }
