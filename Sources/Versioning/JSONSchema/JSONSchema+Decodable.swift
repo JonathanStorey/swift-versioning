@@ -45,24 +45,33 @@ extension JSONSchema {
     ///
     /// ```swift
     /// let recorded = try JSONSchema.placeholder(for: Note.self)
-    /// recorded.scalars[try JSONRepresentation(recorded.value.address.city)]   // ["address", "city"]
+    /// recorded.scalars[try JSONRepresentation(recorded.value.address.city)]   // $.address.city
+    /// recorded.flags.first { $0.value.isPinned }?.path                         // $.isPinned
     /// ```
     ///
     /// - Each `String`, number, `Date`, `Decimal`, `UUID`, `URL` and `Data` is
     ///   unique, and `scalars` holds its path by its JSON. An array's element
-    ///   is at index 0, so the path's `description` reads like `$.stops[0].city`. A `Bool` has
-    ///   too few values to be unique, so it is not listed, and neither is a
-    ///   fixed-width integer too narrow for its unique number.
+    ///   is at index 0, so the path's `description` reads like `$.stops[0].city`.
+    ///   A fixed-width integer too narrow for its unique number is not listed.
+    /// - A `Bool` has too few values to be unique, so every `Bool` in `value`
+    ///   is `false`. Instead, `flags` holds a copy for each `Bool` in which only
+    ///   that `Bool` is `true`, with its path. A key path that reads `true` on
+    ///   a copy finds that copy's path.
     /// - A value that rejects its unique placeholder, such as a raw-value enum
     ///   or a type that validates its text, is decoded again with the plain
     ///   placeholders `init(for:)` uses, so nothing inside it is listed.
     /// - Each ``Markable`` value is given its own marker, and `markers` holds
     ///   its coding path by its marker.
-    public static func placeholder<T: Decodable>(for type: T.Type) throws -> (value: T, markers: [UUID: [String]], scalars: [JSONRepresentation: JSONRepresentation.Path]) {
-        let context = SchemaRecorder.Context()
-        context.usesUniqueScalars = true
-        let value = try SchemaRecorder(codingPath: [], context: context).decode(type)
-        return (value, context.markers, context.scalars)
+    public static func placeholder<T: Decodable>(for type: T.Type) throws -> (value: T, markers: [UUID: [String]], scalars: [JSONRepresentation: JSONRepresentation.Path], flags: [(path: JSONRepresentation.Path, value: T)]) {
+        func record(flipping flag: JSONRepresentation.Path?) throws -> (value: T, context: SchemaRecorder.Context) {
+            let context = SchemaRecorder.Context()
+            context.usesUniqueScalars = true
+            context.flipped = flag
+            return (try SchemaRecorder(codingPath: [], context: context).decode(type), context)
+        }
+        let (value, context) = try record(flipping: nil)
+        let flags = try context.flags.map { path in (path: path, value: try record(flipping: path).value) }
+        return (value, context.markers, context.scalars, flags)
     }
 
     /// A value that ``placeholder(for:)`` gives a unique marker.
@@ -90,6 +99,10 @@ private final class SchemaRecorder: Decoder {
         var uniqueCount = 0
         /// The path of each unique scalar, by its JSON.
         var scalars: [JSONRepresentation: JSONRepresentation.Path] = [:]
+        /// The path of each `Bool`, in the order they are decoded.
+        var flags: [JSONRepresentation.Path] = []
+        /// The path of the one `Bool` decoded as `true`.
+        var flipped: JSONRepresentation.Path?
     }
 
     enum Kind {
@@ -216,9 +229,15 @@ extension SchemaRecorder {
         default:
             throw unsupported("The value was decoded as more than one kind.")
         }
-        guard context.usesUniqueScalars, let unique = unique(like: placeholder),
-              let encodable = unique as? any Encodable, let json = try? JSONRepresentation(encodable) else { return placeholder }
-        context.scalars[json] = JSONRepresentation.Path(codingPath.map { $0 as? JSONRepresentation.Path.Segment ?? .key($0.stringValue) })
+        guard context.usesUniqueScalars else { return placeholder }
+        let path = JSONRepresentation.Path(codingPath.map { $0 as? JSONRepresentation.Path.Segment ?? .key($0.stringValue) })
+        if placeholder is Bool {
+            if !context.flags.contains(path) { context.flags.append(path) }
+            return (path == context.flipped) as? T ?? placeholder
+        }
+        guard let unique = unique(like: placeholder), let encodable = unique as? any Encodable,
+              let json = try? JSONRepresentation(encodable) else { return placeholder }
+        context.scalars[json] = path
         return unique
     }
 
