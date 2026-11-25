@@ -251,6 +251,7 @@ changed it, keep that side.
 | `IdentifiedElementMerge` | `.byID()` | arrays of `Identifiable & Codable` | element by `id`, each by its own merge | no |
 | `PropertyMerge` | `.byProperty()` | any `Codable` | property by property, by the encoded shape | no |
 | `DefaultMergeStrategy` | `.favoring(_:)` | any `Codable` | property by property, each property by its type's own rules | no |
+| `ModelMerge` | `.favoring(_:)` | any SwiftData `PersistentModel` | as `DefaultMergeStrategy`, with relationships as sets of models matched by `id` | no |
 | `RawValueMerge` | `.rawValue(_:)` | any `RawRepresentable` | its raw value, by another strategy | as that strategy |
 
 The dot syntax works wherever a strategy is expected. Each strategy that can
@@ -294,6 +295,30 @@ struct Views: RawRepresentable, Codable, Mergeable {
 let merged = try ours.merging(with: theirs, from: base)
 let favoringTheirs = try ours.merging(with: theirs, from: base, using: .favoring(.theirs))
 ```
+
+### Merging SwiftData models
+
+`ModelMerge` merges a SwiftData model by `DefaultMergeStrategy`'s rules and
+writes the result into ours. Each attribute merges as a `Codable` property
+does, so a `Mergeable` attribute uses its own merge. A to-many relationship
+merges as a set, matching models by `id`, and a to-one relationship both
+sides changed conflicts. A related model both sides hold merges with its
+other versions by the same rules. On a conflict, nothing is written. A model
+that conforms to `Mergeable` merges this way with nothing to write.
+
+```swift
+@Model final class Note: Mergeable {
+    var title = ""
+    var tags: [Tag] = []
+}
+
+try ours.merging(with: theirs, from: base)
+try ModelMerge<Note>(favoring: .theirs).merge(base: base, ours: ours, theirs: theirs)
+```
+
+Models match by `id`, which is `persistentModelID` unless the model declares
+its own. A model theirs adds to a relationship joins ours as ours's context
+holds it, so it must be saved to the same store, or belong to no context.
 
 ### Merging JSON
 
