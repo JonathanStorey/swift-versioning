@@ -106,9 +106,9 @@ private extension PersistentModel {
     /// Plans merging `theirs` into this model, property by property.
     func plan(merging theirs: Self, base: Self?, at path: MergeConflict.Path, favoring side: KeepMerge<Void>?, into plan: inout ModelMergePlan) {
         guard self !== theirs, plan.visited.insert(ObjectIdentifier(self)).inserted else { return }
-        for property in Self.schemaMetadata {
-            guard let keyPath = property.keypath as? any ModelPropertyPath<Self> else { continue }
-            keyPath.plan(self, theirs, base: base, at: path + [.key(property.name)], favoring: side, into: &plan)
+        for metadata in Self.schemaMetadata {
+            guard let property = metadata.property(of: Self.self) else { continue }
+            property.keyPath.plan(self, theirs, base: base, at: path + [.key(property.name)], favoring: side, into: &plan)
         }
     }
 
@@ -143,6 +143,18 @@ private extension PersistentModel {
         ours.plan(merging: theirs, base: base, toMany: false, read: { [$0[keyPath: keyPath]] }, write: { root, models in
             if let model = models.first { root[keyPath: keyPath] = model }
         }, at: path, favoring: side, into: &plan)
+    }
+}
+
+@available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *)
+private extension Schema.PropertyMetadata {
+    /// The property's name and key path. SwiftData keeps both internal, so
+    /// they are read by reflection.
+    func property<Root>(of root: Root.Type) -> (name: String, keyPath: any ModelPropertyPath<Root>)? {
+        let mirror = Mirror(reflecting: self)
+        guard let name = mirror.descendant("name") as? String,
+              let keyPath = mirror.descendant("keypath") as? any ModelPropertyPath<Root> else { return nil }
+        return (name, keyPath)
     }
 }
 
