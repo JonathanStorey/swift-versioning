@@ -85,9 +85,11 @@ private struct Versions {
     }
 }
 
-@available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *)
+/// Each test returns early where SwiftData is unavailable, since Swift
+/// Testing rejects `@available` on a suite.
 @Suite struct ModelMergeTests {
     @Test func eachSidesChangesApply() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.ours.title = "Ours"
         versions.theirs.body = "Theirs"
@@ -98,6 +100,7 @@ private struct Versions {
     }
 
     @Test func anAttributeBothChangedConflictsAndWritesNothing() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.ours.title = "Ours"
         versions.theirs.title = "Theirs"
@@ -108,6 +111,7 @@ private struct Versions {
     }
 
     @Test func favoringKeepsThatSideOnlyWhereItConflicts() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.ours.title = "Ours"
         versions.ours.body = "Ours"
@@ -118,6 +122,7 @@ private struct Versions {
     }
 
     @Test func attributesMergeByTheirTypesOwnRules() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.base.labels = ["x"]
         versions.ours.labels = ["x", "y"]
@@ -130,6 +135,7 @@ private struct Versions {
     }
 
     @Test func aToManyRelationshipMergesAsASet() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.ours.tags = [versions.tag(versions.ids.b, in: versions.ours), versions.tag(versions.ids.c, "c")]
         versions.theirs.tags.append(versions.tag(versions.ids.d, "d"))
@@ -138,6 +144,7 @@ private struct Versions {
     }
 
     @Test func aModelBothSidesHoldMergesWithItsOtherVersions() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.tag(versions.ids.a, in: versions.ours).name = "A"
         versions.tag(versions.ids.a, in: versions.theirs).color = "red"
@@ -147,6 +154,7 @@ private struct Versions {
     }
 
     @Test func aRelatedModelConflictsAtItsPath() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.tag(versions.ids.b, in: versions.ours).name = "Ours"
         versions.tag(versions.ids.b, in: versions.theirs).name = "Theirs"
@@ -155,6 +163,7 @@ private struct Versions {
     }
 
     @Test func aToOneRelationshipBothChangedConflicts() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         var versions = try Versions()
         versions.ours.pinned = versions.tag(versions.ids.a, in: versions.ours)
         versions.theirs.pinned = versions.tag(versions.ids.b, in: versions.theirs)
@@ -167,6 +176,7 @@ private struct Versions {
     }
 
     @Test func anOptionalToManyRelationshipMergesAsASet() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.ours.archive = [versions.tag(versions.ids.c, "c")]
         versions.theirs.archive = [versions.tag(versions.ids.d, "d")]
@@ -175,6 +185,7 @@ private struct Versions {
     }
 
     @Test func withoutABaseOnlyWhatBothShareMerges() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         #expect(try ModelMerge<ModelNote>().merge(ours: versions.ours, theirs: versions.theirs) === versions.ours)
         versions.theirs.title = "Theirs"
@@ -182,6 +193,7 @@ private struct Versions {
     }
 
     @Test func aMergeableModelMergesAsAModel() throws {
+        guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, visionOS 1, *) else { return }
         let versions = try Versions()
         versions.theirs.body = "Theirs"
         let merged = try versions.ours.merging(with: versions.theirs, from: versions.base)
