@@ -139,7 +139,7 @@ struct JSONMergeTests {
         let ours = try json(#"{"title":"A","views":12,"tasks":[{"id":"t","views":2}],"counts":{"x":6}}"#)
         let theirs = try json(#"{"title":"A","views":15,"tasks":[{"id":"t","views":4}],"counts":{"x":9}}"#)
         let result = merge.merged(ours, theirs, base: base)
-        #expect(result.merged == (try json(#"{"title":"A","views":17,"tasks":[{"id":"t","views":5}],"counts":{"x":10}}"#)))
+        #expect(try result.merged == json(#"{"title":"A","views":17,"tasks":[{"id":"t","views":5}],"counts":{"x":10}}"#))
         #expect(result.conflicts.isEmpty)
     }
 
@@ -157,7 +157,7 @@ struct JSONMergeTests {
         let ours = try json(#"{"title":"Ours","views":12,"items":[]}"#)
         let theirs = try json(#"{"title":"Theirs","views":15,"items":[],"new":true}"#)
         let result = merge.merged(ours, theirs, base: base)
-        #expect(result.merged == (try json(#"{"title":"Theirs","views":17,"items":[],"new":true}"#)))
+        #expect(try result.merged == json(#"{"title":"Theirs","views":17,"items":[],"new":true}"#))
         #expect(result.conflicts == [["title"]])
     }
 
