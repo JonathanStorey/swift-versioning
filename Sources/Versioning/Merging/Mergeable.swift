@@ -1,7 +1,7 @@
 /// A type that merges with another version of itself.
 ///
 /// A `Codable` type conforms with nothing to write: it merges field by
-/// field, as ``DefaultMergeStrategy`` does. Any type can
+/// field, as ``DefaultMerge`` does. Any type can
 /// implement the merge with a strategy instead, or by hand.
 ///
 /// ```swift
@@ -15,7 +15,7 @@
 /// }
 ///
 /// let merged = try ours.merging(with: theirs, from: base)
-/// let favoringTheirs = try ours.merging(with: theirs, from: base, using: .favoring(.theirs))
+/// let favoringTheirs = try ours.merging(with: theirs, from: base, using: .default(favoring: .theirs))
 /// ```
 public protocol Mergeable {
     /// This version merged with `theirs`, knowing their common ancestor.
@@ -64,22 +64,22 @@ extension Mergeable where Self: Equatable {
 }
 
 extension Mergeable where Self: Codable {
-    /// Merges field by field, as ``DefaultMergeStrategy`` does.
+    /// Merges field by field, as ``DefaultMerge`` does.
     public func merging(with theirs: Self, from base: Self) throws(MergeConflict) -> Self {
-        try merging(with: theirs, from: base, using: DefaultMergeStrategy())
+        try merging(with: theirs, from: base, using: DefaultMerge())
     }
 
     /// Without a base, only what both versions share merges, as
-    /// ``DefaultMergeStrategy`` does.
+    /// ``DefaultMerge`` does.
     public func merging(with theirs: Self) throws(MergeConflict) -> Self {
-        try merging(with: theirs, using: DefaultMergeStrategy())
+        try merging(with: theirs, using: DefaultMerge())
     }
 }
 
 extension Mergeable where Self: Codable & Equatable {
     /// Without a base, only what both versions share merges, as
-    /// ``DefaultMergeStrategy`` does.
+    /// ``DefaultMerge`` does.
     public func merging(with theirs: Self) throws(MergeConflict) -> Self {
-        try merging(with: theirs, using: DefaultMergeStrategy())
+        try merging(with: theirs, using: DefaultMerge())
     }
 }

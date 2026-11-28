@@ -58,7 +58,7 @@ extension MergeStrategy where Value: Equatable {
 ///
 /// Each path is relative to the merged value, and `[]` is the whole value.
 /// A strategy for one value, such as `.sum()`, conflicts at `[]`. One that
-/// merges parts, such as `.favoring(_:)` or `.byKey()`, reports every part
+/// merges parts, such as `.default(favoring:)` or `.byKey()`, reports every part
 /// that conflicts, so an app can ask about only those.
 ///
 /// ```swift

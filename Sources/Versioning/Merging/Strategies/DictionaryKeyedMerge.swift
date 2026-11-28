@@ -2,7 +2,7 @@
 ///
 /// - A key only one side changed, added or removed keeps that side.
 /// - A value both sides changed merges by its own merge if it is
-///   ``Mergeable``, otherwise as ``DefaultMergeStrategy`` does.
+///   ``Mergeable``, otherwise as ``DefaultMerge`` does.
 /// - A key one side removed and the other changed conflicts.
 ///
 /// With `favoring`, each conflicting key takes that side, and every other

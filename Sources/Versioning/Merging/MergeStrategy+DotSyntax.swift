@@ -75,9 +75,14 @@ extension MergeStrategy {
         Self(favoring: side)
     }
 
-    /// ``DefaultMergeStrategy``: property by property, each property by its
+    /// ``DefaultMerge``: property by property, each property by its
     /// type's own rules, keeping `side` at each conflicting value.
-    public static func favoring<V: Codable>(_ side: KeepMerge<V>?) -> Self where Self == DefaultMergeStrategy<V> {
+    public static func `default`<V: Codable>(favoring side: KeepMerge<V>? = nil) -> Self where Self == DefaultMerge<V> {
+        Self(favoring: side)
+    }
+
+    @available(*, deprecated, renamed: "default(favoring:)")
+    public static func favoring<V: Codable>(_ side: KeepMerge<V>?) -> Self where Self == DefaultMerge<V> {
         Self(favoring: side)
     }
 

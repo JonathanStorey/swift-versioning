@@ -3,7 +3,7 @@
 ///
 /// - An element only one side changed keeps that side.
 /// - An element both sides changed merges by its own merge if it is
-///   ``Mergeable``, otherwise as ``DefaultMergeStrategy`` does.
+///   ``Mergeable``, otherwise as ``DefaultMerge`` does.
 /// - An element either side added is kept. Theirs goes after the element it
 ///   follows in theirs.
 /// - An element one side removed is removed, unless the other side changed
@@ -115,7 +115,7 @@ extension Encodable where Self: Decodable {
             if let mergeable = Self.self as? any Mergeable.Type, let value = try mergeable.merged(ours, theirs, base: base) as? Self {
                 return value
             }
-            let strategy = DefaultMergeStrategy<Self>(favoring: side)
+            let strategy = DefaultMerge<Self>(favoring: side)
             guard let base else { return try strategy.merge(ours: ours, theirs: theirs) }
             return try strategy.merge(base: base, ours: ours, theirs: theirs)
         } catch let conflict as MergeConflict {

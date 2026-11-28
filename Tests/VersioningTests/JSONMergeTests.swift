@@ -43,13 +43,28 @@ private struct Longest: Codable, Equatable, Mergeable {
     }
 }
 
+/// An element whose `id` is encoded as `"uuid"`.
+private struct Tagged: Codable, Identifiable, Equatable {
+    var id: String
+    var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "uuid"
+        case text
+    }
+}
+
+private struct Shelf: Codable {
+    var items: [Tagged]
+}
+
 private let noteSchema = try! JSONSchema(for: Note.self)
 
 /// Merges three notes and decodes the result.
 private func merge(
     base: Note, ours: Note, theirs: Note, favoring: KeepMerge<JSONRepresentation> = .ours, schema: JSONSchema? = noteSchema
 ) throws -> (merged: Note, conflicts: [JSONRepresentation.Path]) {
-    let result = try JSONMerge(favoring: favoring, using: schema)
+    let result = try DefaultMerge<JSONRepresentation>(favoring: favoring, using: schema)
         .merged(JSONRepresentation(ours), JSONRepresentation(theirs), base: JSONRepresentation(base))
     return (try result.merged.decode(Note.self), result.conflicts)
 }
@@ -126,15 +141,36 @@ struct JSONMergeTests {
     }
 
     @Test func isAMergeStrategy() throws {
-        let merge = JSONMerge(favoring: .theirs)
-        let merged = try merge.merge(base: ["a": 1, "b": 1], ours: ["a": 2, "b": 1], theirs: ["a": 3, "b": 2])
+        let merged = try DefaultMerge<JSONRepresentation>(favoring: .theirs)
+            .merge(base: ["a": 1, "b": 1], ours: ["a": 2, "b": 1], theirs: ["a": 3, "b": 2])
         #expect(merged == ["a": 3, "b": 2])
+        let dotSyntax: DefaultMerge<JSONRepresentation> = .default(favoring: .ours)
+        #expect(try dotSyntax.merge(base: ["a": 1], ours: ["a": 2], theirs: ["a": 3]) == ["a": 2])
+    }
+
+    @Test func withoutAFavoredSideConflictsThrow() {
+        do {
+            _ = try DefaultMerge<JSONRepresentation>().merge(base: ["a": 1, "b": 1], ours: ["a": 2, "b": 1], theirs: ["a": 3, "b": 1])
+            Issue.record("The conflict at a did not throw.")
+        } catch {
+            #expect(error.paths == [["a"]])
+        }
+    }
+
+    @Test func identifiedElementsMatchByTheirEncodedID() throws {
+        let base: JSONRepresentation = ["items": [["uuid": "a", "text": "one"], ["uuid": "b", "text": "two"]]]
+        let ours: JSONRepresentation = ["items": [["uuid": "b", "text": "two"], ["uuid": "a", "text": "one, ours"]]]
+        let theirs: JSONRepresentation = ["items": [["uuid": "a", "text": "one"], ["uuid": "b", "text": "two, theirs"], ["uuid": "c", "text": "three"]]]
+        let result = DefaultMerge<JSONRepresentation>(for: Shelf.self).merged(ours, theirs, base: base)
+        let texts = try result.merged.decode(Shelf.self).items.map(\.text)
+        #expect(Set(texts) == ["one, ours", "two, theirs", "three"])
+        #expect(result.conflicts.isEmpty)
     }
 
     // MARK: Mergeable values
 
     @Test func mergeableValuesMergeByTheirOwnRules() throws {
-        let merge = try JSONMerge(for: Board.self)
+        let merge = DefaultMerge<JSONRepresentation>(for: Board.self)
         let base = try json(#"{"title":"A","views":10,"tasks":[{"id":"t","views":1}],"counts":{"x":5}}"#)
         let ours = try json(#"{"title":"A","views":12,"tasks":[{"id":"t","views":2}],"counts":{"x":6}}"#)
         let theirs = try json(#"{"title":"A","views":15,"tasks":[{"id":"t","views":4}],"counts":{"x":9}}"#)
@@ -144,14 +180,14 @@ struct JSONMergeTests {
     }
 
     @Test func sameChangeOnBothSidesStillMerges() throws {
-        let merge = try JSONMerge(for: Board.self)
+        let merge = DefaultMerge<JSONRepresentation>(for: Board.self)
         let base = try json(#"{"title":"A","views":10,"tasks":[],"counts":{}}"#)
         let raised = try json(#"{"title":"A","views":11,"tasks":[],"counts":{}}"#)
         #expect(merge.merged(raised, raised, base: base).merged["views"] == 12)
     }
 
     @Test func mergeableValuesMergeInJSONTheTypeCannotRead() throws {
-        let merge = try JSONMerge(favoring: .theirs, for: Board.self)
+        let merge = DefaultMerge<JSONRepresentation>(favoring: .theirs, for: Board.self)
         // A newer version renamed `tasks` and added a key, so neither side decodes as `Board`.
         let base = try json(#"{"title":"A","views":10,"items":[]}"#)
         let ours = try json(#"{"title":"Ours","views":12,"items":[]}"#)
@@ -162,7 +198,7 @@ struct JSONMergeTests {
     }
 
     @Test func identifiedElementsPairByIDWhenReordered() throws {
-        let merge = try JSONMerge(for: Board.self)
+        let merge = DefaultMerge<JSONRepresentation>(for: Board.self)
         let base = try json(#"{"title":"A","views":0,"tasks":[{"id":"a","views":1},{"id":"b","views":1}],"counts":{}}"#)
         let ours = try json(#"{"title":"A","views":0,"tasks":[{"id":"b","views":2},{"id":"a","views":1}],"counts":{}}"#)
         let theirs = try json(#"{"title":"A","views":0,"tasks":[{"id":"a","views":1},{"id":"b","views":3}],"counts":{}}"#)
@@ -172,14 +208,14 @@ struct JSONMergeTests {
     }
 
     @Test func aMergeableTypeMergesAsAWhole() throws {
-        let merge = try JSONMerge(favoring: .ours, for: Longest.self)
+        let merge = DefaultMerge<JSONRepresentation>(favoring: .ours, for: Longest.self)
         let result = merge.merged(["text": "ours"], ["text": "theirs, longer"], base: ["text": "base"])
         #expect(result.merged == ["text": "theirs, longer"])
         #expect(result.conflicts.isEmpty)
     }
 
     @Test func withoutABaseMergeableValuesUseTheirTwoWayMerge() throws {
-        let merge = try JSONMerge(favoring: .ours, for: Board.self)
+        let merge = DefaultMerge<JSONRepresentation>(favoring: .ours, for: Board.self)
         let ours = try json(#"{"title":"A","views":12,"tasks":[],"counts":{}}"#)
         let theirs = try json(#"{"title":"A","views":15,"tasks":[],"counts":{}}"#)
         // `Views` has no merge without a base, so the conflict keeps ours.

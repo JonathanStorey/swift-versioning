@@ -250,13 +250,12 @@ changed it, keep that side.
 | `StringWordMerge` | `.byWord()` | `String` | word by word | yes |
 | `IdentifiedElementMerge` | `.byID()` | arrays of `Identifiable & Codable` | element by `id`, each by its own merge | no |
 | `PropertyMerge` | `.byProperty()` | any `Codable` | property by property, by the encoded shape | no |
-| `DefaultMergeStrategy` | `.favoring(_:)` | any `Codable` | property by property, each property by its type's own rules | no |
+| `DefaultMerge` | `.default(favoring:)` | any `Codable` | property by property, each property by its type's own rules | no |
 | `RawValueMerge` | `.rawValue(_:)` | any `RawRepresentable` | its raw value, by another strategy | as that strategy |
-| `JSONMerge` | | `JSONRepresentation` | by schema, arrays of objects by `"id"`, `Mergeable` values by their own rules | no, never throws |
 
 The dot syntax works wherever a strategy is expected. Each strategy that can
 conflict (`.sum()`, `.byMembership()`, `.byKey()`, `.byElement()`, `.byWord()`,
-`.byID()`, `.byProperty()` and `.favoring(_:)`) holds a settable `favoring` side, kept wherever it conflicts:
+`.byID()`, `.byProperty()` and `.default()`) holds a settable `favoring` side, kept wherever it conflicts:
 
 ```swift
 try ours.merging(with: theirs, from: base, using: .byWord(favoring: .ours))
@@ -265,13 +264,13 @@ var strategy = StringWordMerge<String>()
 strategy.favoring = .theirs
 ```
 
-`.byProperty(favoring:)` and `.favoring(_:)` keep the side only at each
+`.byProperty(favoring:)` and `.default(favoring:)` keep the side only at each
 conflicting value, and every other change from both sides. `.byProperty()` reads
-only the encoded shape. `DefaultMergeStrategy` also lets each property's type
+only the encoded shape. `DefaultMerge` also lets each property's type
 decide, and is what a `Codable` `Mergeable` type uses by default.
 
 A type that merges with another version of itself conforms to `Mergeable`. A
-`Codable` type has nothing to write: it merges with `DefaultMergeStrategy`,
+`Codable` type has nothing to write: it merges with `DefaultMerge`,
 field by field. Wherever both sides changed a property whose type is `Mergeable`, at any
 depth, that type's own merge decides, so a `Views` property in a `Note` sums.
 An array or set of `Identifiable` elements merges by `id`, as `.byID()` does,
@@ -293,7 +292,7 @@ struct Views: RawRepresentable, Codable, Mergeable {
 }
 
 let merged = try ours.merging(with: theirs, from: base)
-let favoringTheirs = try ours.merging(with: theirs, from: base, using: .favoring(.theirs))
+let favoringTheirs = try ours.merging(with: theirs, from: base, using: .default(favoring: .theirs))
 ```
 
 ### Merging JSON
@@ -319,17 +318,19 @@ try PropertyMerge<Note>().merge(base: base, ours: ours, theirs: theirs)
 try PropertyMerge<Note>(favoring: .theirs).merge(base: base, ours: ours, theirs: theirs)
 ```
 
-`JSONMerge` merges JSON that may not decode, such as a newer version's, and
-never throws. Where an array of objects with an `"id"` conflicts, it merges
-by `"id"`. Made for a type, each `Codable` `Mergeable` value inside it merges
-by its own rules wherever both sides changed it, decoding only that value, so
-a `Views` counter sums even when the rest of the JSON is unreadable. Every
-other conflict keeps the `favoring` side. Without a schema, it infers one from
-the three versions.
+`DefaultMerge<JSONRepresentation>` merges JSON that may not decode, such as a
+newer version's. Made for a type, each `Codable` `Mergeable` value inside it
+merges by its own rules wherever both sides changed it, decoding only that
+value, so a `Views` counter sums even when the rest of the JSON is unreadable.
+An array of `Identifiable` elements merges by `id`, wherever the type encodes
+it. Given only a schema, or nothing, it infers the shape and matches elements
+by an `"id"` property. `merged(_:_:base:)` never throws and returns every
+conflict, each holding the `favoring` side, or ours without one.
 
 ```swift
-let merge = try JSONMerge(favoring: .ours, for: Note.self)
+let merge = DefaultMerge<JSONRepresentation>(favoring: .ours, for: Note.self)
 let (merged, conflicts) = merge.merged(ours, theirs, base: base)
+let inferred = try DefaultMerge<JSONRepresentation>().merge(base: base, ours: ours, theirs: theirs)  // throws on a conflict
 ```
 
 ## Requirements
