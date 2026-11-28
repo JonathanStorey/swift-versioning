@@ -33,27 +33,36 @@ public struct PropertyMerge<Value>: Sendable {
 
 extension PropertyMerge: MergeStrategy where Value: Codable {
     public func merge(base: Value, ours: Value, theirs: Value) throws(MergeConflict) -> Value {
-        try favoring.resolving(ours: ours, theirs: theirs) { () throws(MergeConflict) in
-            try Self.decoded { try MergeContext(ours, theirs, base: JSONRepresentation(base), favoring: favoring, readingTypes: false) }
-        }
+        try merged(ours, theirs, base: base)
     }
 
     /// Without a base, only what both sides share merges. See
     /// ``JSONRepresentation/merging(_:base:under:)``.
     public func merge(ours: Value, theirs: Value) throws(MergeConflict) -> Value {
-        try favoring.resolving(ours: ours, theirs: theirs) { () throws(MergeConflict) in
-            try Self.decoded { try MergeContext(ours, theirs, base: nil, favoring: favoring, readingTypes: false) }
-        }
+        try merged(ours, theirs, base: nil)
     }
 
-    /// The value the context decodes, with any failure as a conflict.
-    private static func decoded(_ context: () throws -> MergeContext) throws(MergeConflict) -> Value {
-        do {
-            return try context().decode(Value.self)
-        } catch let conflict as MergeConflict {
-            throw conflict
-        } catch {
-            throw MergeConflict()
+    /// The versions merged as JSON by their encoded shape, then decoded.
+    /// Each conflict takes `favoring`, or throws without it.
+    private func merged(_ ours: Value, _ theirs: Value, base: Value?) throws(MergeConflict) -> Value {
+        try favoring.resolving(ours: ours, theirs: theirs) { () throws(MergeConflict) in
+            guard let mine = try? JSONRepresentation(ours), let yours = try? JSONRepresentation(theirs) else { throw MergeConflict() }
+            var original: JSONRepresentation?
+            if let base {
+                guard let value = try? JSONRepresentation(base) else { throw MergeConflict() }
+                original = value
+            }
+            // A type the schema cannot describe still merges by shape.
+            let schema = try? JSONSchema(for: Value.self)
+            var conflicts: [JSONRepresentation.Path] = []
+            var merged = mine.merging(yours, base: original, under: schema, at: [], conflicts: &conflicts)
+            switch favoring {
+            case nil where !conflicts.isEmpty: throw MergeConflict(at: conflicts)
+            case .theirs?: for path in conflicts { merged[path] = yours[path] }
+            default: break
+            }
+            guard let value = try? merged.decode(Value.self) else { throw MergeConflict() }
+            return value
         }
     }
 }
