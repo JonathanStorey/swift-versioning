@@ -25,23 +25,6 @@ extension DefaultMerge where Value == JSONRepresentation {
             json = JSONMerge(schema: recorded.schema, mergeables: recorded.mergeables, identifiers: recorded.identifiers)
         }
     }
-
-    /// `ours` merged with `theirs`, along with the path of every conflict.
-    ///
-    /// It never throws: each conflict keeps the `favoring` side, or ours when
-    /// `favoring` is `nil`. A ``Mergeable`` value's own merge is not a conflict.
-    ///
-    /// ```swift
-    /// let merge = DefaultMerge<JSONRepresentation>(favoring: .ours, for: Note.self)
-    /// let (merged, conflicts) = merge.merged(ours, theirs, base: base)
-    /// ```
-    public func merged(
-        _ ours: JSONRepresentation,
-        _ theirs: JSONRepresentation,
-        base: JSONRepresentation?
-    ) -> (merged: JSONRepresentation, conflicts: [JSONRepresentation.Path]) {
-        json.merged(ours, theirs, base: base, favoring: favoring)
-    }
 }
 
 // MARK: - Engine

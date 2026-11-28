@@ -225,6 +225,13 @@ struct JSONMergeTests {
     }
 }
 
+private extension DefaultMerge where Value == JSONRepresentation {
+    /// The merge with every conflict's path, which never throws.
+    func merged(_ ours: JSONRepresentation, _ theirs: JSONRepresentation, base: JSONRepresentation?) -> (merged: JSONRepresentation, conflicts: [JSONRepresentation.Path]) {
+        json.merged(ours, theirs, base: base, favoring: favoring)
+    }
+}
+
 private extension JSONRepresentation {
     var elements: [JSONRepresentation]? {
         if case .array(let elements) = self { elements } else { nil }

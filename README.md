@@ -324,13 +324,12 @@ merges by its own rules wherever both sides changed it, decoding only that
 value, so a `Views` counter sums even when the rest of the JSON is unreadable.
 An array of `Identifiable` elements merges by `id`, wherever the type encodes
 it. Given only a schema, or nothing, it infers the shape and matches elements
-by an `"id"` property. `merged(_:_:base:)` never throws and returns every
-conflict, each holding the `favoring` side, or ours without one.
+by an `"id"` property. With a favored side it never throws. Without one, a
+conflict throws with the path of every conflict.
 
 ```swift
-let merge = DefaultMerge<JSONRepresentation>(favoring: .ours, for: Note.self)
-let (merged, conflicts) = merge.merged(ours, theirs, base: base)
-let inferred = try DefaultMerge<JSONRepresentation>().merge(base: base, ours: ours, theirs: theirs)  // throws on a conflict
+let merged = try DefaultMerge<JSONRepresentation>(favoring: .ours, for: Note.self).merge(base: base, ours: ours, theirs: theirs)
+let strict = try DefaultMerge<JSONRepresentation>(using: schema).merge(base: base, ours: ours, theirs: theirs)  // throws on a conflict
 ```
 
 ## Requirements
