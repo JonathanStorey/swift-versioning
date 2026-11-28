@@ -233,7 +233,7 @@ private struct Post: Codable, Equatable, Mergeable {
     var counts: [String: Views] = ["a": Views(rawValue: 1)]
 }
 
-@Suite struct DefaultMergeStrategyTests {
+@Suite struct DefaultMergeTests {
     @Test func propertyMergeReadsOnlyTheShape() throws {
         let base = Post()
         var ours = base, theirs = base
@@ -241,7 +241,7 @@ private struct Post: Codable, Equatable, Mergeable {
         theirs.views = Views(rawValue: 4)
         #expect(throws: MergeConflict.self) { try PropertyMerge<Post>().merge(base: base, ours: ours, theirs: theirs) }
         #expect(try ours.merging(with: theirs, from: base, using: .byProperty(favoring: .theirs)).views == Views(rawValue: 4))
-        #expect(try ours.merging(with: theirs, from: base, using: .favoring(.theirs)).views == Views(rawValue: 6))
+        #expect(try ours.merging(with: theirs, from: base, using: .default(favoring: .theirs)).views == Views(rawValue: 6))
     }
 
     @Test func aMergeablePropertyMergesByItsOwnType() throws {
@@ -261,7 +261,7 @@ private struct Post: Codable, Equatable, Mergeable {
         ours.venue.visits = Views(rawValue: 2)
         theirs.venue.visits = Views(rawValue: 3)
         theirs.venue.city = "Bergen"
-        let merged = try DefaultMergeStrategy<Post>().merge(base: base, ours: ours, theirs: theirs)
+        let merged = try DefaultMerge<Post>().merge(base: base, ours: ours, theirs: theirs)
         #expect(merged.venue == Venue(city: "Bergen", visits: Views(rawValue: 5)))
     }
 
@@ -280,8 +280,8 @@ private struct Post: Codable, Equatable, Mergeable {
         theirs.views = Views(rawValue: 4)
         ours.title = "Ours"
         theirs.title = "Theirs"
-        #expect(throws: MergeConflict.self) { try DefaultMergeStrategy<Post>().merge(base: base, ours: ours, theirs: theirs) }
-        let merged = try DefaultMergeStrategy<Post>(favoring: .theirs).merge(base: base, ours: ours, theirs: theirs)
+        #expect(throws: MergeConflict.self) { try DefaultMerge<Post>().merge(base: base, ours: ours, theirs: theirs) }
+        let merged = try DefaultMerge<Post>(favoring: .theirs).merge(base: base, ours: ours, theirs: theirs)
         #expect(merged.title == "Theirs")
         #expect(merged.views == Views(rawValue: 6))
     }
@@ -292,8 +292,8 @@ private struct Post: Codable, Equatable, Mergeable {
         ours.stamp.value = 1
         theirs.stamp.value = 2
         #expect(throws: MergeConflict.self) { try ours.merging(with: theirs, from: base) }
-        #expect(try DefaultMergeStrategy<Post>(favoring: .theirs).merge(base: base, ours: ours, theirs: theirs).stamp.value == 2)
-        #expect(try DefaultMergeStrategy<Post>(favoring: .ours).merge(base: base, ours: ours, theirs: theirs).stamp.value == 1)
+        #expect(try DefaultMerge<Post>(favoring: .theirs).merge(base: base, ours: ours, theirs: theirs).stamp.value == 2)
+        #expect(try DefaultMerge<Post>(favoring: .ours).merge(base: base, ours: ours, theirs: theirs).stamp.value == 1)
     }
 
     @Test func aPropertyOnlyOneSideChangedSkipsItsOwnMerge() throws {

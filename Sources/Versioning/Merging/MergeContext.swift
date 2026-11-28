@@ -173,7 +173,7 @@ extension Dictionary: KeyedEntries where Key: Codable, Value: Codable {
     }
 }
 
-private extension JSONRepresentation {
+extension JSONRepresentation {
     /// This value decoded as `T`, or `nil`. It is wrapped in an array, since
     /// a top-level fragment is not decodable everywhere.
     func decoded<T: Decodable>(_ type: T.Type) -> T? {

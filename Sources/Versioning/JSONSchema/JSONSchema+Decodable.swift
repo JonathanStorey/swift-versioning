@@ -36,6 +36,24 @@ extension JSONSchema {
         self = try recorder.schema()
     }
 
+    /// Describes `type` as `init(for:)` does, along with the path of each
+    /// `Codable` ``Mergeable`` value in it, so a merge of its JSON can let
+    /// those values merge by their own rules.
+    ///
+    /// It also finds where each `Identifiable` value encodes its `id`, so
+    /// identified elements can be matched by it.
+    static func recording<T: Decodable>(_ type: T.Type) throws -> (
+        schema: JSONSchema,
+        mergeables: [JSONRepresentation.Path: any (Mergeable & Codable).Type],
+        identifiers: [JSONRepresentation.Path: JSONRepresentation.Path]
+    ) {
+        let context = SchemaRecorder.Context()
+        context.recordsIdentifiers = true
+        let recorder = SchemaRecorder(codingPath: [], context: context)
+        _ = try recorder.decode(type)
+        return (try recorder.schema(), context.mergeables, context.identifiers)
+    }
+
     /// Decodes `type` as `init(for:)` does and returns the placeholder value,
     /// with the coding path of each value in it that can be told apart.
     ///
@@ -82,6 +100,17 @@ extension JSONSchema {
     }
 }
 
+private extension Identifiable where Self: Decodable {
+    /// The path of `id` inside this type's JSON, found by decoding a
+    /// placeholder whose scalars are unique, or `nil` when `id` is not one of them.
+    static func idPath() -> JSONRepresentation.Path? {
+        guard let recorded = try? JSONSchema.placeholder(for: Self.self),
+              let id = recorded.value.id as? any Encodable,
+              let json = try? JSONRepresentation(id) else { return nil }
+        return recorded.scalars[json]
+    }
+}
+
 // MARK: - Recorder
 
 /// A `Decoder` that records the schema of one value position. Containers
@@ -104,6 +133,13 @@ private final class SchemaRecorder: Decoder {
         var flags: [JSONRepresentation.Path] = []
         /// The path of the one `Bool` decoded as `true`, or enum decoded as its second case.
         var flipped: JSONRepresentation.Path?
+        /// The path of each `Codable` ``Mergeable`` value, with its type. An array's
+        /// element is at index 0 and a dictionary's value at key `"*"`.
+        var mergeables: [JSONRepresentation.Path: any (Mergeable & Codable).Type] = [:]
+        /// Whether to find where each `Identifiable` value encodes its `id`.
+        var recordsIdentifiers = false
+        /// The path of each `Identifiable` value, with the path of its `id` inside it.
+        var identifiers: [JSONRepresentation.Path: JSONRepresentation.Path] = [:]
     }
 
     enum Kind {
@@ -171,6 +207,13 @@ extension SchemaRecorder {
             value = try construct(type)
         }
         recordCases(of: type)
+        if let mergeable = type as? any (Mergeable & Codable).Type {
+            context.mergeables[self.path] = mergeable
+        }
+        if context.recordsIdentifiers, let identifiable = type as? any (Identifiable & Decodable).Type,
+           let idPath = identifiable.idPath() {
+            context.identifiers[self.path] = idPath
+        }
         if case .array = kind, type is any SetAlgebra.Type {
             isUnique = true
         }

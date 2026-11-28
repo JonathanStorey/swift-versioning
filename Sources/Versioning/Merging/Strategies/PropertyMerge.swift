@@ -6,7 +6,7 @@
 ///
 /// It reads only the encoded shape, never a property's type. To let each
 /// property's type decide, as a ``Mergeable`` counter or an `Identifiable`
-/// list would, use ``DefaultMergeStrategy``.
+/// list would, use ``DefaultMerge``.
 ///
 /// Without `favoring`, any value both sides changed differently throws.
 /// With it, every change that does not conflict still applies, from both
