@@ -36,22 +36,24 @@ extension JSONSchema {
         self = try recorder.schema()
     }
 
-    /// Describes `type` as `init(for:)` does, along with the path of each
-    /// `Codable` ``Mergeable`` value in it, so a merge of its JSON can let
-    /// those values merge by their own rules.
+    /// Describes `type` as `init(for:)` does, along with the merge rule each
+    /// value in it declares and where each `Identifiable` value encodes its
+    /// `id`, so a merge of its JSON can follow the type's own rules.
     ///
-    /// It also finds where each `Identifiable` value encodes its `id`, so
-    /// identified elements can be matched by it.
-    static func recording<T: Decodable>(_ type: T.Type) throws -> (
-        schema: JSONSchema,
-        mergeables: [JSONRepresentation.Path: any (Mergeable & Codable).Type],
+    /// A dictionary keyed by anything but a `String` is left out of the
+    /// schema, since its JSON has no single shape, and merges by its rule.
+    /// The schema is `nil` when the type cannot be described, but the rules
+    /// found before the problem are kept.
+    static func recording<T: Decodable>(_ type: T.Type) -> (
+        schema: JSONSchema?,
+        rules: [JSONRepresentation.Path: MergeRule],
         identifiers: [JSONRepresentation.Path: JSONRepresentation.Path]
     ) {
         let context = SchemaRecorder.Context()
-        context.recordsIdentifiers = true
+        context.recordsRules = true
         let recorder = SchemaRecorder(codingPath: [], context: context)
-        _ = try recorder.decode(type)
-        return (try recorder.schema(), context.mergeables, context.identifiers)
+        let schema = (try? recorder.decode(type)).flatMap { _ in try? recorder.schema() }
+        return (schema, context.rules, context.identifiers)
     }
 
     /// Decodes `type` as `init(for:)` does and returns the placeholder value,
@@ -133,11 +135,11 @@ private final class SchemaRecorder: Decoder {
         var flags: [JSONRepresentation.Path] = []
         /// The path of the one `Bool` decoded as `true`, or enum decoded as its second case.
         var flipped: JSONRepresentation.Path?
-        /// The path of each `Codable` ``Mergeable`` value, with its type. An array's
-        /// element is at index 0 and a dictionary's value at key `"*"`.
-        var mergeables: [JSONRepresentation.Path: any (Mergeable & Codable).Type] = [:]
-        /// Whether to find where each `Identifiable` value encodes its `id`.
-        var recordsIdentifiers = false
+        /// Whether to record merge rules and where each `Identifiable` value encodes its `id`.
+        var recordsRules = false
+        /// The merge rule each value declares, by its path. An array's element
+        /// is at index 0 and a dictionary's value at key `"*"`.
+        var rules: [JSONRepresentation.Path: MergeRule] = [:]
         /// The path of each `Identifiable` value, with the path of its `id` inside it.
         var identifiers: [JSONRepresentation.Path: JSONRepresentation.Path] = [:]
     }
@@ -155,6 +157,9 @@ private final class SchemaRecorder: Decoder {
     var userInfo: [CodingUserInfoKey: Any] { [:] }
     var kind: Kind = .unknown
     var isOptional = false
+    /// Whether the value is left out of the schema, as a dictionary keyed by
+    /// anything but a `String` is while recording merge rules.
+    var isOpaque = false
     /// Whether the array's elements are unique, as a `Set`'s are.
     var isUnique = false
     /// Keys checked with `contains(_:)`. A type that checks for a key before
@@ -186,8 +191,17 @@ extension SchemaRecorder {
         let path = codingPath.map(\.stringValue)
         if let value = try foundationPlaceholder(type) { return value }
         if let dictionary = type as? any StringKeyedDictionary.Type {
+            if context.recordsRules, let rule = MergeRule(for: type) { context.rules[self.path] = rule }
             _ = try values().decode(dictionary.valueType)
             guard let value = dictionary.init() as? T else { preconditionFailure("\(T.self) is the dictionary type") }
+            return value
+        }
+
+        // A dictionary keyed by anything else has no single JSON shape, so it is left out and merges by its rule.
+        if context.recordsRules, let entries = type as? any KeyedEntries.Type, let rule = MergeRule(for: type) {
+            context.rules[self.path] = rule
+            isOpaque = true
+            guard let value = entries.init() as? T else { preconditionFailure("\(T.self) is the dictionary type") }
             return value
         }
 
@@ -207,10 +221,10 @@ extension SchemaRecorder {
             value = try construct(type)
         }
         recordCases(of: type)
-        if let mergeable = type as? any (Mergeable & Codable).Type {
-            context.mergeables[self.path] = mergeable
+        if context.recordsRules, let rule = MergeRule(for: type) {
+            context.rules[self.path] = rule
         }
-        if context.recordsIdentifiers, let identifiable = type as? any (Identifiable & Decodable).Type,
+        if context.recordsRules, let identifiable = type as? any (Identifiable & Decodable).Type,
            let idPath = identifiable.idPath() {
             context.identifiers[self.path] = idPath
         }
@@ -363,7 +377,7 @@ extension SchemaRecorder {
             guard !readsAllKeys else {
                 throw unsupported("The keys are read at runtime. JSONSchema describes a Dictionary keyed by String, but not other types that read their keys at runtime.")
             }
-            base = .object(try properties.map { property in
+            base = .object(try properties.filter { !$0.recorder.isOpaque }.map { property in
                 let schema = try property.recorder.schema()
                 let isChecked = checkedKeys.contains(property.key) && !schema.isOptional
                 return (key: property.key, value: isChecked ? .optional(schema) : schema)

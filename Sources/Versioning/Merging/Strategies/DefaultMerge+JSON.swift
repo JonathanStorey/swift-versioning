@@ -12,34 +12,43 @@ extension DefaultMerge where Value == JSONRepresentation {
         json = JSONMerge(schema: schema)
     }
 
-    /// Merges the JSON of `type`, guided by its schema. Each `Codable`
-    /// ``Mergeable`` value inside it, `type` included, merges by its own rules,
-    /// and each array of `Identifiable` elements merges by `id`.
+    /// Merges the JSON of `type`, guided by its schema and by the rules its
+    /// values declare: each `Codable` ``Mergeable`` value inside it, `type`
+    /// included, merges by its own merge, each array or set of `Identifiable`
+    /// elements by `id`, and each dictionary by key. Every rule comes from
+    /// something a type declares.
     ///
     /// Only what conflicts is decoded, so JSON that `type` cannot read, such
     /// as a newer version's, still merges. A type ``JSONSchema/init(for:)``
     /// cannot describe merges by the inferred shape instead.
     public init<T: Decodable>(favoring: KeepMerge<JSONRepresentation>? = nil, for type: T.Type) {
         self.init(favoring: favoring)
-        if let recorded = try? JSONSchema.recording(type) {
-            json = JSONMerge(schema: recorded.schema, mergeables: recorded.mergeables, identifiers: recorded.identifiers)
-        }
+        json = JSONMerge(for: type)
     }
 }
 
 // MARK: - Engine
 
-/// What guides a merge of JSON: the schema, the type of each `Mergeable`
-/// value and where each `Identifiable` element keeps its `id`, each by its
-/// path in the schema, where an array's element is at index 0 and a
-/// dictionary's value at key `"*"`.
-///
-/// A metatype holds no state, and a `Mergeable` merge is a function of its
-/// arguments, so sharing them across threads is safe.
-struct JSONMerge: @unchecked Sendable {
+/// What guides a merge of JSON: the schema, the rule each value declares
+/// and where each `Identifiable` element keeps its `id`, each by its path in
+/// the schema, where an array's element is at index 0 and a dictionary's
+/// value at key `"*"`.
+struct JSONMerge: Sendable {
     var schema: JSONSchema?
-    var mergeables: [JSONRepresentation.Path: any (Mergeable & Codable).Type] = [:]
+    var rules: [JSONRepresentation.Path: MergeRule] = [:]
     var identifiers: [JSONRepresentation.Path: JSONRepresentation.Path] = [:]
+    /// Whether an array of objects with an `"id"` property merges by it. A
+    /// merge guided by a type follows only what the type declares.
+    var infersIdentifiers = true
+}
+
+extension JSONMerge {
+    /// The guide for `type`'s JSON, or for its inferred shape when
+    /// ``JSONSchema/init(for:)`` cannot describe it.
+    init<T: Decodable>(for type: T.Type) {
+        let recorded = JSONSchema.recording(type)
+        self.init(schema: recorded.schema, rules: recorded.rules, identifiers: recorded.identifiers, infersIdentifiers: false)
+    }
 }
 
 extension JSONMerge {
@@ -53,11 +62,15 @@ extension JSONMerge {
         var merge = self
         if merge.schema == nil { merge.schema = JSONSchema(inferredFrom: [ours, theirs] + (base.map { [$0] } ?? [])) }
         var (merged, conflicts) = merge.mergedByShape(ours, theirs, base: base, favoring: favoring)
-        guard !mergeables.isEmpty else { return (merged, conflicts) }
+        guard !rules.isEmpty else { return (merged, conflicts) }
         var settled: [JSONRepresentation.Path] = []
-        merged = merge.settling(merged, ours, theirs, base: base, isTwoWay: base == nil, under: merge.schema, at: [], [], settled: &settled)
+        var failed: [JSONRepresentation.Path] = []
+        merged = merge.settling(
+            merged, ours, theirs, base: base, isTwoWay: base == nil, favoring: favoring?.retyped(),
+            under: merge.schema, at: [], [], settled: &settled, failed: &failed
+        )
         conflicts.removeAll { conflict in settled.contains { conflict.starts(with: $0) } }
-        return (merged, conflicts)
+        return (merged, conflicts + failed.filter { !conflicts.contains($0) })
     }
 }
 
@@ -139,7 +152,7 @@ private extension JSONMerge {
     /// the element is an object with that property.
     func idPath(at elementPath: JSONRepresentation.Path, element: JSONSchema) -> JSONRepresentation.Path? {
         if let idPath = identifiers[elementPath] { return idPath }
-        guard case .object(let properties) = element.unwrapped, properties.contains(where: { $0.key == "id" }) else { return nil }
+        guard infersIdentifiers, case .object(let properties) = element.unwrapped, properties.contains(where: { $0.key == "id" }) else { return nil }
         return ["id"]
     }
 
@@ -149,16 +162,17 @@ private extension JSONMerge {
         for (path, idPath) in self.identifiers where path.starts(with: prefix) {
             identifiers[JSONRepresentation.Path(Array(path.dropFirst(prefix.count)))] = idPath
         }
-        return JSONMerge(schema: schema, identifiers: identifiers)
+        return JSONMerge(schema: schema, identifiers: identifiers, infersIdentifiers: infersIdentifiers)
     }
 }
 
 // MARK: Mergeable values
 
 private extension JSONMerge {
-    /// `merged`, at `path`, with each `Mergeable` value both sides changed
-    /// replaced by its own merge of `ours` and `theirs`. Appends the path of
-    /// each value it replaced to `settled`.
+    /// `merged`, at `path`, with each value both sides changed whose type
+    /// declares a rule replaced by that rule's merge of `ours` and `theirs`.
+    /// Appends the path of each value it replaced to `settled`, and of each
+    /// conflict a rule could not settle without a side to `failed`.
     ///
     /// `schemaPath` is `path` as the schema spells it. Elements of an array
     /// pair up by `id`, or by position when no array changed its length.
@@ -168,23 +182,34 @@ private extension JSONMerge {
         _ theirs: JSONRepresentation,
         base: JSONRepresentation?,
         isTwoWay: Bool,
+        favoring side: KeepMerge<Void>?,
         under schema: JSONSchema?,
         at schemaPath: JSONRepresentation.Path,
         _ path: JSONRepresentation.Path,
-        settled: inout [JSONRepresentation.Path]
+        settled: inout [JSONRepresentation.Path],
+        failed: inout [JSONRepresentation.Path]
     ) -> JSONRepresentation {
-        if let type = mergeables[schemaPath] {
-            // As a typed merge does, both sides making the same change still merges, so two raises add up.
-            let bothChanged = if isTwoWay {
-                !ours.isEquivalent(to: theirs)
+        if let rule = rules[schemaPath] {
+            // Both sides making the same change still merges for a `Mergeable` value, so two raises add up.
+            let bothChanged = if ours.isEquivalent(to: theirs), !(rule.mergesAlike && !isTwoWay) {
+                false
+            } else if isTwoWay {
+                true
             } else if let base {
                 !ours.isEquivalent(to: base) && !theirs.isEquivalent(to: base)
             } else {
                 false  // Both sides added it.
             }
-            guard bothChanged, let value = type.mergedJSON(ours, theirs, base: base) else { return merged }
-            settled.append(path)
-            return value
+            guard bothChanged else { return merged }
+            do {
+                guard let value = try rule.merge(ours, theirs, isTwoWay ? nil : base, side) else { return merged }
+                settled.append(path)
+                return value
+            } catch {
+                // Where the rule conflicts, the JSON merge stands, and without a side the conflict is reported.
+                if side == nil { failed += error.inside(path).paths }
+                return merged
+            }
         }
 
         /// The child at `segment`, settled, when both sides have it.
@@ -196,10 +221,14 @@ private extension JSONMerge {
             _ yours: JSONRepresentation?,
             _ original: JSONRepresentation?,
             under schema: JSONSchema?,
-            settled: inout [JSONRepresentation.Path]
+            settled: inout [JSONRepresentation.Path],
+            failed: inout [JSONRepresentation.Path]
         ) -> JSONRepresentation {
             guard let mine, let yours else { return value }
-            return settling(value, mine, yours, base: original, isTwoWay: isTwoWay, under: schema, at: schemaPath + [schemaSegment], path + [segment], settled: &settled)
+            return settling(
+                value, mine, yours, base: original, isTwoWay: isTwoWay, favoring: side,
+                under: schema, at: schemaPath + [schemaSegment], path + [segment], settled: &settled, failed: &failed
+            )
         }
 
         switch (schema?.unwrapped, merged) {
@@ -207,14 +236,14 @@ private extension JSONMerge {
             var result: JSONRepresentation.Object = []
             for pair in pairs {
                 let schema = properties.first { $0.key == pair.key }?.value
-                let value = child(pair.value, at: .key(pair.key), spelled: .key(pair.key), ours[pair.key], theirs[pair.key], base?[pair.key], under: schema, settled: &settled)
+                let value = child(pair.value, at: .key(pair.key), spelled: .key(pair.key), ours[pair.key], theirs[pair.key], base?[pair.key], under: schema, settled: &settled, failed: &failed)
                 result.append((key: pair.key, value: value))
             }
             return .object(result)
         case (.dictionary(let values)?, .object(let pairs)):
             var result: JSONRepresentation.Object = []
             for pair in pairs {
-                let value = child(pair.value, at: .key(pair.key), spelled: "*", ours[pair.key], theirs[pair.key], base?[pair.key], under: values, settled: &settled)
+                let value = child(pair.value, at: .key(pair.key), spelled: "*", ours[pair.key], theirs[pair.key], base?[pair.key], under: values, settled: &settled, failed: &failed)
                 result.append((key: pair.key, value: value))
             }
             return .object(result)
@@ -228,9 +257,9 @@ private extension JSONMerge {
                 if let idPath, let id = value[idPath] {
                     // An identified element pairs with the same `id` on each side, wherever it is.
                     let match = { (elements: [JSONRepresentation]?) in elements?.first { $0[idPath] == id } }
-                    result.append(child(value, at: .index(index), spelled: .index(0), match(mine), match(yours), match(originals), under: element, settled: &settled))
+                    result.append(child(value, at: .index(index), spelled: .index(0), match(mine), match(yours), match(originals), under: element, settled: &settled, failed: &failed))
                 } else if samePositions {
-                    result.append(child(value, at: .index(index), spelled: .index(0), mine[index], yours[index], originals?[index], under: element, settled: &settled))
+                    result.append(child(value, at: .index(index), spelled: .index(0), mine[index], yours[index], originals?[index], under: element, settled: &settled, failed: &failed))
                 } else {
                     result.append(value)
                 }
@@ -239,23 +268,6 @@ private extension JSONMerge {
         default:
             return merged
         }
-    }
-}
-
-private extension Mergeable where Self: Codable {
-    /// `ours` merged with `theirs` by this type's own merge, or `nil` when a
-    /// version does not decode or the merge conflicts.
-    static func mergedJSON(_ ours: JSONRepresentation, _ theirs: JSONRepresentation, base: JSONRepresentation?) -> JSONRepresentation? {
-        guard let mine = ours.decoded(Self.self), let yours = theirs.decoded(Self.self) else { return nil }
-        let original: Self?
-        if let base {
-            guard let value = base.decoded(Self.self) else { return nil }
-            original = value
-        } else {
-            original = nil
-        }
-        guard let merged = try? merged(mine, yours, base: original) else { return nil }
-        return try? JSONRepresentation(merged)
     }
 }
 

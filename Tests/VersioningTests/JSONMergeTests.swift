@@ -22,7 +22,7 @@ private struct Views: RawRepresentable, Codable, Equatable, Mergeable {
     }
 }
 
-private struct Card: Codable, Equatable {
+private struct Card: Codable, Equatable, Identifiable {
     var id: String
     var views: Views
 }
