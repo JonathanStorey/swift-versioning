@@ -36,6 +36,16 @@ extension JSONSchema {
         self = try recorder.schema()
     }
 
+    /// Describes `type` as `init(for:)` does, along with the path of each
+    /// `Codable` ``Mergeable`` value in it, so a merge of its JSON can let
+    /// those values merge by their own rules.
+    static func recording<T: Decodable>(_ type: T.Type) throws -> (schema: JSONSchema, mergeables: [JSONRepresentation.Path: any (Mergeable & Codable).Type]) {
+        let context = SchemaRecorder.Context()
+        let recorder = SchemaRecorder(codingPath: [], context: context)
+        _ = try recorder.decode(type)
+        return (try recorder.schema(), context.mergeables)
+    }
+
     /// Decodes `type` as `init(for:)` does and returns the placeholder value,
     /// with the coding path of each value in it that can be told apart.
     ///
@@ -104,6 +114,9 @@ private final class SchemaRecorder: Decoder {
         var flags: [JSONRepresentation.Path] = []
         /// The path of the one `Bool` decoded as `true`, or enum decoded as its second case.
         var flipped: JSONRepresentation.Path?
+        /// The path of each `Codable` ``Mergeable`` value, with its type. An array's
+        /// element is at index 0 and a dictionary's value at key `"*"`.
+        var mergeables: [JSONRepresentation.Path: any (Mergeable & Codable).Type] = [:]
     }
 
     enum Kind {
@@ -171,6 +184,9 @@ extension SchemaRecorder {
             value = try construct(type)
         }
         recordCases(of: type)
+        if let mergeable = type as? any (Mergeable & Codable).Type {
+            context.mergeables[self.path] = mergeable
+        }
         if case .array = kind, type is any SetAlgebra.Type {
             isUnique = true
         }

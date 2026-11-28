@@ -252,6 +252,7 @@ changed it, keep that side.
 | `PropertyMerge` | `.byProperty()` | any `Codable` | property by property, by the encoded shape | no |
 | `DefaultMergeStrategy` | `.favoring(_:)` | any `Codable` | property by property, each property by its type's own rules | no |
 | `RawValueMerge` | `.rawValue(_:)` | any `RawRepresentable` | its raw value, by another strategy | as that strategy |
+| `JSONMerge` | | `JSONRepresentation` | by schema, arrays of objects by `"id"`, `Mergeable` values by their own rules | no, never throws |
 
 The dot syntax works wherever a strategy is expected. Each strategy that can
 conflict (`.sum()`, `.byMembership()`, `.byKey()`, `.byElement()`, `.byWord()`,
@@ -316,6 +317,19 @@ conflict, or keeps the named side at each one:
 ```swift
 try PropertyMerge<Note>().merge(base: base, ours: ours, theirs: theirs)
 try PropertyMerge<Note>(favoring: .theirs).merge(base: base, ours: ours, theirs: theirs)
+```
+
+`JSONMerge` merges JSON that may not decode, such as a newer version's, and
+never throws. Where an array of objects with an `"id"` conflicts, it merges
+by `"id"`. Made for a type, each `Codable` `Mergeable` value inside it merges
+by its own rules wherever both sides changed it, decoding only that value, so
+a `Views` counter sums even when the rest of the JSON is unreadable. Every
+other conflict keeps the `favoring` side. Without a schema, it infers one from
+the three versions.
+
+```swift
+let merge = try JSONMerge(favoring: .ours, for: Note.self)
+let (merged, conflicts) = merge.merged(ours, theirs, base: base)
 ```
 
 ## Requirements
